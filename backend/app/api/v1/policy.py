@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 import structlog
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 
-from app.ai.chains.policy_rag import answer_question
+from app.ai.graphs.policy_rag import run_policy_rag
 from app.api.deps import SessionDep
 from app.core.config import settings
 from app.repositories.policy import (
@@ -95,7 +95,7 @@ async def chat_with_policy(
     payload: AskRequest,
 ) -> AskResponse:
     """基于制度知识库问答（非流式）。"""
-    return await answer_question(
+    return await run_policy_rag(
         session,
         question=payload.question,
         category=payload.category,
