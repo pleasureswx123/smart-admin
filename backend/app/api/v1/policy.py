@@ -1,13 +1,26 @@
 """制度万事通（policy）API：上传 / 问答 / 文件管理。"""
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Annotated
 from uuid import UUID, uuid4
 
 import structlog
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
+from fastapi.responses import StreamingResponse
 
-from app.ai.graphs.policy_rag import run_policy_rag
+from app.ai.graphs.policy_rag import run_policy_rag, stream_policy_rag
 from app.api.deps import SessionDep
 from app.core.config import settings
 from app.repositories.policy import (
@@ -89,17 +102,59 @@ async def upload_policy_file(
     return KnowledgeFileRead.model_validate(record)
 
 
-@router.post("/chat", response_model=AskResponse)
+def _format_sse(event: str, data: dict) -> str:
+    """SSE 事件帧：event + 单行 data + 空行。"""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+
+
+@router.post(
+    "/chat",
+    responses={
+        200: {
+            "content": {
+                "application/json": {"schema": AskResponse.model_json_schema()},
+                "text/event-stream": {},
+            }
+        }
+    },
+)
 async def chat_with_policy(
     session: SessionDep,
     payload: AskRequest,
-) -> AskResponse:
-    """基于制度知识库问答（非流式）。"""
-    return await run_policy_rag(
+    accept: Annotated[str | None, Header()] = None,
+) -> Response:
+    """基于制度知识库问答；按 Accept 分流：
+    - `text/event-stream` -> SSE（meta/stage/token/citation/done）
+    - 其他 -> JSON `AskResponse`
+    """
+    wants_stream = accept is not None and "text/event-stream" in accept.lower()
+    if wants_stream:
+
+        async def event_source():
+            async for event_name, data in stream_policy_rag(
+                session,
+                question=payload.question,
+                category=payload.category,
+                top_k=payload.top_k,
+                session_id=payload.session_id,
+            ):
+                yield _format_sse(event_name, data)
+
+        return StreamingResponse(
+            event_source(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    result = await run_policy_rag(
         session,
         question=payload.question,
         category=payload.category,
         top_k=payload.top_k,
+    )
+    return Response(
+        content=result.model_dump_json(),
+        media_type="application/json",
     )
 
 

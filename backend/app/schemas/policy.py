@@ -31,6 +31,7 @@ class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     category: str | None = Field(default=None, description="按类目过滤；None 表示全库检索")
     top_k: int = Field(default=5, ge=1, le=20)
+    session_id: str | None = Field(default=None, description="会话 ID（流式 meta 事件回传）")
 
 
 class Citation(BaseModel):
