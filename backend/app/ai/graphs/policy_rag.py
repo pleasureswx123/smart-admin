@@ -48,10 +48,38 @@ class PolicyRagState(TypedDict, total=False):
 
 _NO_HIT_ANSWER = "目前制度中未找到相关说明，请补充更多关键词或扩大检索范围。"
 
+# evaluate 阈值与 retry 上限（按设计文档 §4.1：retry 最多 2 次）。
+SCORE_RETRY_THRESHOLD = 0.30
+MAX_RETRIES = 2
+
+_REWRITE_SYSTEM_PROMPT = (
+    "你是一个内部知识库检索助手。请根据用户原始问题生成更适合"
+    "向量检索的查询语句：抽取核心概念、补全可能的同义术语、剔除"
+    "口语化措辞。只返回改写后的查询，不要解释、不要添加引号。"
+)
+
 
 async def node_rewrite(session: AsyncSession, state: PolicyRagState) -> dict:
-    # MVP：直传原问题；后续可在此调用 LLM 做关键词提取/消歧。
-    return {"rewritten_question": state["question"]}
+    """首轮直传原问题；retry 轮调 LLM 抽取检索关键词。"""
+    retry_count = state.get("retry_count", 0)
+    if retry_count == 0:
+        return {"rewritten_question": state["question"]}
+    chat = get_chat_model()
+    reply = await chat.ainvoke(
+        [
+            SystemMessage(content=_REWRITE_SYSTEM_PROMPT),
+            HumanMessage(content=f"原始问题：{state['question']}"),
+        ]
+    )
+    rewritten = reply.content if isinstance(reply.content, str) else str(reply.content)
+    rewritten = rewritten.strip() or state["question"]
+    log.info(
+        "policy_rag.rewrite",
+        retry=retry_count,
+        original_len=len(state["question"]),
+        rewritten=rewritten,
+    )
+    return {"rewritten_question": rewritten}
 
 
 async def node_retrieve(session: AsyncSession, state: PolicyRagState) -> dict:
@@ -61,7 +89,7 @@ async def node_retrieve(session: AsyncSession, state: PolicyRagState) -> dict:
         category=state.get("category"),
         top_k=state.get("top_k", 5),
     )
-    file_names: dict[UUID, str] = {}
+    file_names: dict[UUID, str] = dict(state.get("file_names") or {})
     for chunk, _ in hits:
         if chunk.file_id in file_names:
             continue
@@ -71,9 +99,15 @@ async def node_retrieve(session: AsyncSession, state: PolicyRagState) -> dict:
 
 
 async def node_evaluate(session: AsyncSession, state: PolicyRagState) -> dict:
-    # MVP：仅根据是否命中判断；第 3 步引入分数阈值 + retry 逻辑。
+    """命中度评估：top1 score < 阈值且尚有 retry 配额时回到 rewrite。"""
     hits = state.get("hits") or []
-    return {"evaluation": "ok" if hits else "fail"}
+    retry_count = state.get("retry_count", 0)
+    if not hits:
+        return {"evaluation": "fail"}
+    top_score = hits[0][1]
+    if top_score < SCORE_RETRY_THRESHOLD and retry_count < MAX_RETRIES:
+        return {"evaluation": "retry", "retry_count": retry_count + 1}
+    return {"evaluation": "ok"}
 
 
 def prepare_answer_messages(state: PolicyRagState) -> list:
@@ -122,6 +156,9 @@ def build_policy_rag_graph(session: AsyncSession):
     async def _answer(state: PolicyRagState) -> dict:
         return await node_answer(session, state)
 
+    def _route_after_evaluate(state: PolicyRagState) -> str:
+        return "rewrite" if state.get("evaluation") == "retry" else "answer"
+
     graph = StateGraph(PolicyRagState)
     graph.add_node("rewrite", _rewrite)
     graph.add_node("retrieve", _retrieve)
@@ -130,7 +167,11 @@ def build_policy_rag_graph(session: AsyncSession):
     graph.add_edge(START, "rewrite")
     graph.add_edge("rewrite", "retrieve")
     graph.add_edge("retrieve", "evaluate")
-    graph.add_edge("evaluate", "answer")
+    graph.add_conditional_edges(
+        "evaluate",
+        _route_after_evaluate,
+        {"rewrite": "rewrite", "answer": "answer"},
+    )
     graph.add_edge("answer", END)
     return graph.compile()
 
@@ -169,7 +210,8 @@ async def stream_policy_rag(
     """流式执行 RAG 流程；按设计 §7.1 的事件序列 yield (event, data)。
 
     事件序列：
-      meta -> stage(node, loading|success) * 4 -> token* -> citation* -> done
+      meta -> [stage rewrite/retrieve/evaluate]* (retry<=2) -> stage answer
+      -> token* -> citation* -> done
     """
     started = time.perf_counter()
     graph_run_id = str(uuid4())
@@ -182,22 +224,25 @@ async def stream_policy_rag(
         "retry_count": 0,
     }
 
-    # 1. rewrite
-    yield "stage", {"node": "rewrite", "status": "loading"}
-    state.update(await node_rewrite(session, state))
-    yield "stage", {"node": "rewrite", "status": "success"}
+    # rewrite -> retrieve -> evaluate（最多 MAX_RETRIES 轮 retry）
+    while True:
+        yield "stage", {"node": "rewrite", "status": "loading"}
+        state.update(await node_rewrite(session, state))
+        yield "stage", {"node": "rewrite", "status": "success"}
 
-    # 2. retrieve
-    yield "stage", {"node": "retrieve", "status": "loading"}
-    state.update(await node_retrieve(session, state))
-    yield "stage", {"node": "retrieve", "status": "success"}
+        yield "stage", {"node": "retrieve", "status": "loading"}
+        state.update(await node_retrieve(session, state))
+        yield "stage", {"node": "retrieve", "status": "success"}
 
-    # 3. evaluate
-    yield "stage", {"node": "evaluate", "status": "loading"}
-    state.update(await node_evaluate(session, state))
-    yield "stage", {"node": "evaluate", "status": "success"}
+        yield "stage", {"node": "evaluate", "status": "loading"}
+        state.update(await node_evaluate(session, state))
+        if state.get("evaluation") == "retry":
+            yield "stage", {"node": "evaluate", "status": "retry"}
+            continue
+        yield "stage", {"node": "evaluate", "status": "success"}
+        break
 
-    # 4. answer（流式）
+    # answer（流式）
     yield "stage", {"node": "answer", "status": "loading"}
     hits = state.get("hits") or []
     file_names = state.get("file_names") or {}
