@@ -1,0 +1,4 @@
+# 进容器执行的 shell 脚本必须使用 LF；Dockerfile 同理。
+*.sh           text eol=lf
+Dockerfile     text eol=lf
+*.dockerignore text eol=lf
