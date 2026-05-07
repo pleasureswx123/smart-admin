@@ -43,6 +43,7 @@ class Settings(BaseSettings):
 
     # ===== 存储 =====
     POLICY_UPLOAD_DIR: str = "data/uploads/policy"
+    DOCUMENT_EXPORT_DIR: str = "data/exports/document"
 
     # ===== Tavily =====
     TAVILY_API_KEY: str = ""
