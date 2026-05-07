@@ -23,8 +23,14 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --no-dev
 
-# 拷贝应用源码
+# 拷贝应用源码 + alembic 迁移目录与入口脚本
 COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini ./alembic.ini
+COPY scripts ./scripts
+
+# 入口脚本可执行
+RUN chmod +x ./scripts/entrypoint.sh
 
 # 同步项目自身（不再装依赖）
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -32,4 +38,4 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 EXPOSE 8000
 
-CMD ["uv", "run", "--no-sync", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["./scripts/entrypoint.sh"]

@@ -1,0 +1,16 @@
+.venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.git
+.env*
+data/uploads
+data/exports
+data/logs
+data/knowledge_base
+.vscode
+.idea
+*.log
+Dockerfile
+.dockerignore
