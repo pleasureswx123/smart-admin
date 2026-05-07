@@ -2,15 +2,22 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import re
+import time as _time
+import urllib.parse
+from datetime import date, datetime, time, timedelta, timezone
 from uuid import UUID
 
+import httpx
 import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pypinyin import Style, lazy_pinyin
 from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import get_session_factory
@@ -20,6 +27,10 @@ from app.schemas.visitor import (
     HostMatch,
     OcrCardResponse,
     VisitorOut,
+    VisitorRegisterRequest,
+    VisitorStats,
+    WeeklyTrendPoint,
+    WeeklyTrendResponse,
 )
 
 logger = structlog.get_logger(__name__)
@@ -260,3 +271,176 @@ async def ocr_card(image_bytes: bytes, mime_type: str = "image/jpeg") -> OcrCard
         title=(parsed.get("title") or "").strip(),
         confidence=float(parsed.get("confidence") or 0.0),
     )
+
+
+
+# ============= 登记 / 列表 / 详情 =============
+async def register_visitor(
+    session: AsyncSession, redis: Redis, payload: VisitorRegisterRequest
+) -> VisitorRecord:
+    """登记访客：解析被访人 → 落库 registered。钉钉推送由调用方异步触发。"""
+    host_name_snapshot = ""
+    host_match_score = 0.0
+    if payload.host_employee_id:
+        emp = await repo.get_employee(session, payload.host_employee_id)
+        if not emp or not emp.is_active:
+            raise ValueError("被访人不存在或已停用")
+        host_name_snapshot = emp.name
+        host_match_score = 1.0
+    elif payload.host_name:
+        # 无 ID：尝试从 Redis 模糊匹配 top1，记录 score 但不强制
+        matches = await search_host(redis, payload.host_name, limit=1)
+        if matches:
+            host_name_snapshot = matches[0].name
+            host_match_score = matches[0].score
+        else:
+            host_name_snapshot = payload.host_name
+            host_match_score = 0.0
+    else:
+        raise ValueError("必须指定 host_employee_id 或 host_name")
+
+    record = VisitorRecord(
+        name=payload.name.strip(),
+        company=payload.company.strip(),
+        phone=re.sub(r"\D+", "", payload.phone)[-11:],
+        purpose=(payload.purpose or "").strip() or None,
+        host_employee_id=payload.host_employee_id,
+        host_name_snapshot=host_name_snapshot,
+        host_match_score=host_match_score,
+        status="registered",
+        source=payload.source,
+        push_status="pending",
+    )
+    return await repo.create_visitor(session, record)
+
+
+async def list_visitors_paged(
+    session: AsyncSession, *, status: str | None, search: str | None, page: int, page_size: int
+) -> tuple[list[VisitorOut], int]:
+    items, total = await repo.list_visitors(
+        session, status=status, search=search, page=page, page_size=page_size
+    )
+    return [to_visitor_out(r) for r in items], total
+
+
+# ============= 签到 / 签退 =============
+async def check_in(session: AsyncSession, vid: UUID) -> VisitorRecord:
+    rec = await repo.get_visitor(session, vid)
+    if not rec:
+        raise LookupError("访客记录不存在")
+    if rec.status == "left":
+        raise ValueError("已离开，无法重复签到")
+    if rec.status != "entered":
+        rec.status = "entered"
+        rec.check_in_at = datetime.now(timezone.utc)
+        await repo.update_visitor(session, rec)
+    return rec
+
+
+async def check_out(session: AsyncSession, vid: UUID) -> VisitorRecord:
+    rec = await repo.get_visitor(session, vid)
+    if not rec:
+        raise LookupError("访客记录不存在")
+    if rec.status == "registered":
+        raise ValueError("尚未签到，无法签退")
+    if rec.status != "left":
+        rec.status = "left"
+        rec.check_out_at = datetime.now(timezone.utc)
+        await repo.update_visitor(session, rec)
+    return rec
+
+
+# ============= 统计 =============
+async def get_today_stats(session: AsyncSession) -> VisitorStats:
+    counts = await repo.count_today_by_status(session)
+    # weekly = 最近 7 天创建数总和
+    end = datetime.now(timezone.utc)
+    start = datetime.combine(end.date() - timedelta(days=6), time.min, tzinfo=timezone.utc)
+    by_day = await repo.count_by_day(session, start=start, end=end)
+    weekly = sum(by_day.values())
+    return VisitorStats(
+        today_total=counts["today_total"],
+        today_entered=counts["today_entered"],
+        today_left=counts["today_left"],
+        weekly_total=weekly,
+    )
+
+
+_DAY_LABELS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+
+async def get_weekly_trend(session: AsyncSession) -> WeeklyTrendResponse:
+    """最近 7 天每日访客创建数（含今天）。"""
+    today = date.today()
+    start = datetime.combine(today - timedelta(days=6), time.min, tzinfo=timezone.utc)
+    end = datetime.combine(today, time.max, tzinfo=timezone.utc)
+    by_day = await repo.count_by_day(session, start=start, end=end)
+    points: list[WeeklyTrendPoint] = []
+    for i in range(6, -1, -1):
+        d = today - timedelta(days=i)
+        points.append(
+            WeeklyTrendPoint(
+                day=_DAY_LABELS[d.weekday()],
+                date=d.isoformat(),
+                count=int(by_day.get(d, 0)),
+            )
+        )
+    return WeeklyTrendResponse(points=points)
+
+
+# ============= 钉钉推送 =============
+def _ding_signed_url(webhook: str, secret: str) -> str:
+    """加签模式：在 webhook 上拼接 timestamp + sign。"""
+    ts = str(round(_time.time() * 1000))
+    payload = f"{ts}\n{secret}".encode("utf-8")
+    digest = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).digest()
+    sign = urllib.parse.quote_plus(base64.b64encode(digest))
+    sep = "&" if "?" in webhook else "?"
+    return f"{webhook}{sep}timestamp={ts}&sign={sign}"
+
+
+def _build_ding_markdown(rec: VisitorRecord) -> dict:
+    title = f"访客登记 · {rec.name}"
+    body = (
+        f"### 访客来访通知\n"
+        f"- **访客**：{rec.name}\n"
+        f"- **公司**：{rec.company}\n"
+        f"- **手机**：{_mask_phone(rec.phone)}\n"
+        f"- **来访事由**：{rec.purpose or '未填写'}\n"
+        f"- **被访人**：{rec.host_name_snapshot or '未指定'}\n"
+        f"- **登记时间**：{rec.created_at.strftime('%Y-%m-%d %H:%M')}\n"
+    )
+    return {"msgtype": "markdown", "markdown": {"title": title, "text": body}}
+
+
+async def notify_dingtalk(session: AsyncSession, vid: UUID) -> VisitorRecord:
+    """异步调用钉钉自定义机器人 webhook；记录推送状态/错误。未配置时直接置 skipped。"""
+    rec = await repo.get_visitor(session, vid)
+    if not rec:
+        raise LookupError("访客记录不存在")
+    if not settings.DINGTALK_WEBHOOK_URL:
+        rec.push_status = "skipped"
+        rec.push_error = "DINGTALK_WEBHOOK_URL 未配置"
+        await repo.update_visitor(session, rec)
+        return rec
+    url = (
+        _ding_signed_url(settings.DINGTALK_WEBHOOK_URL, settings.DINGTALK_SECRET)
+        if settings.DINGTALK_SECRET
+        else settings.DINGTALK_WEBHOOK_URL
+    )
+    body = _build_ding_markdown(rec)
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(url, json=body)
+        data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        if resp.status_code == 200 and data.get("errcode", 0) == 0:
+            rec.push_status = "success"
+            rec.push_error = None
+        else:
+            rec.push_status = "failed"
+            rec.push_error = (data.get("errmsg") or resp.text)[:500]
+    except httpx.HTTPError as e:
+        rec.push_status = "failed"
+        rec.push_error = str(e)[:500]
+    await repo.update_visitor(session, rec)
+    return rec
