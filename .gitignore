@@ -1,0 +1,79 @@
+# ===== 通用 =====
+.DS_Store
+Thumbs.db
+*.log
+*.pid
+*.seed
+*.swp
+*.swo
+*~
+
+# ===== IDE / 编辑器 =====
+.idea/
+.vscode/
+*.iml
+*.sublime-*
+
+# ===== 环境变量与密钥 =====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ===== Node / Next.js (frontend) =====
+node_modules/
+.next/
+out/
+dist/
+build/
+.vercel/
+.turbo/
+.snowflake/
+.v0-trash/
+next.user-config.*
+__v0_runtime_loader.js
+__v0_devtools.tsx
+__v0_jsx-dev-runtime.ts
+*.tsbuildinfo
+.eslintcache
+coverage/
+
+# ===== Python / FastAPI (backend) =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.pdm-python
+.pdm-build/
+.uv-cache/
+
+# ===== 数据与运行时产物 =====
+data/knowledge_base/*
+!data/knowledge_base/.gitkeep
+data/vector_store/
+data/uploads/
+data/temp/
+data/logs/
+*.sqlite
+*.sqlite3
+*.db
+
+# ===== Docker =====
+docker-compose.override.yml
+
+# ===== 构建产物 / 缓存 =====
+.cache/
+.parcel-cache/
+.next/cache/
