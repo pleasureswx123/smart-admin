@@ -18,7 +18,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """FastAPI 生命周期：启动时初始化 DB / Redis，关闭时释放。"""
     configure_logging()
     init_engine()
-    init_redis()
+    redis = init_redis()
+    # 启动时把员工通讯录加载到 Redis 拼音倒排索引（失败不影响启动）
+    try:
+        from app.services.visitor_service import rebuild_index_from_db
+        count = await rebuild_index_from_db(redis)
+        log.info("app.startup.visitor_index", employees=count)
+    except Exception as e:  # pragma: no cover - 启动期容错
+        log.warning("app.startup.visitor_index.failed", error=str(e))
     log.info("app.startup", message="resources initialized")
     try:
         yield
