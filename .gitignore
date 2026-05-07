@@ -69,6 +69,7 @@ data/logs/
 data/exports/
 data/postgres/
 data/redis/
+backend/data/
 *.sqlite
 *.sqlite3
 *.db

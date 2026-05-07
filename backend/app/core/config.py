@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     ARK_EMBEDDING_MODEL: str = "doubao-embedding-text-240715"
     ARK_EMBEDDING_DIM: int = 2560
 
+    # ===== 存储 =====
+    POLICY_UPLOAD_DIR: str = "data/uploads/policy"
+
     # ===== Tavily =====
     TAVILY_API_KEY: str = ""
 
