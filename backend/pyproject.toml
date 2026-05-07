@@ -10,6 +10,7 @@ dependencies = [
     "langchain>=1.2.17",
     "langchain-openai>=1.2.1",
     "langchain-postgres>=0.0.17",
+    "langchain-text-splitters>=1.1.2",
     "langgraph>=1.1.10",
     "pgvector>=0.3,<0.4",
     "psycopg[binary,pool]>=3.3.4",
