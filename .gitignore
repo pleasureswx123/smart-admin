@@ -66,6 +66,9 @@ data/vector_store/
 data/uploads/
 data/temp/
 data/logs/
+data/exports/
+data/postgres/
+data/redis/
 *.sqlite
 *.sqlite3
 *.db
