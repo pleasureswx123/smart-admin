@@ -1,17 +1,28 @@
-"""制度万事通（policy）API：上传文件 + 问答。"""
+"""制度万事通（policy）API：上传 / 问答 / 文件管理。"""
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import structlog
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 
 from app.ai.chains.policy_rag import answer_question
 from app.api.deps import SessionDep
 from app.core.config import settings
-from app.repositories.policy import get_knowledge_file
-from app.schemas.policy import AskRequest, AskResponse, KnowledgeFileRead
+from app.repositories.policy import (
+    delete_knowledge_file,
+    get_knowledge_file,
+    list_categories_with_file_count,
+    list_knowledge_files,
+)
+from app.schemas.policy import (
+    AskRequest,
+    AskResponse,
+    CategoryItem,
+    KnowledgeFileRead,
+    QuickQuestion,
+)
 from app.services.policy_service import ingest_markdown_file
 
 router = APIRouter(prefix="/policy", tags=["policy"])
@@ -90,3 +101,75 @@ async def chat_with_policy(
         category=payload.category,
         top_k=payload.top_k,
     )
+
+
+@router.get("/files", response_model=list[KnowledgeFileRead])
+async def list_files(
+    session: SessionDep,
+    category: str | None = Query(default=None, description="按分类过滤"),
+    only_ready: bool = Query(default=False, description="仅返回 ready 状态"),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> list[KnowledgeFileRead]:
+    files = await list_knowledge_files(
+        session,
+        category=category,
+        status_in=["ready"] if only_ready else None,
+        limit=limit,
+        offset=offset,
+    )
+    return [KnowledgeFileRead.model_validate(f) for f in files]
+
+
+@router.get("/files/{file_id}", response_model=KnowledgeFileRead)
+async def get_file(session: SessionDep, file_id: UUID) -> KnowledgeFileRead:
+    record = await get_knowledge_file(session, file_id)
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在"
+        )
+    return KnowledgeFileRead.model_validate(record)
+
+
+@router.delete("/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_file(session: SessionDep, file_id: UUID) -> None:
+    """删除文件 + 全部 chunk + 物理文件（best-effort）。"""
+    record = await delete_knowledge_file(session, file_id)
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在"
+        )
+    await session.commit()
+    physical = Path(record.file_path)
+    if physical.is_file():
+        try:
+            physical.unlink()
+        except OSError as exc:
+            log.warning(
+                "policy.delete.unlink_failed",
+                file_id=str(file_id),
+                path=str(physical),
+                error=str(exc),
+            )
+
+
+@router.get("/categories", response_model=list[CategoryItem])
+async def list_categories(session: SessionDep) -> list[CategoryItem]:
+    rows = await list_categories_with_file_count(session)
+    return [CategoryItem(category=c, file_count=n) for c, n in rows]
+
+
+@router.get("/quick-questions", response_model=list[QuickQuestion])
+async def list_quick_questions(
+    category: str | None = Query(default=None),
+) -> list[QuickQuestion]:
+    """常用问题（MVP：硬编码；后续可改为 DB / 配置文件驱动）。"""
+    presets: list[QuickQuestion] = [
+        QuickQuestion(text="公司年假多少天？", category="hr"),
+        QuickQuestion(text="周末加班工资怎么算？", category="hr"),
+        QuickQuestion(text="差旅报销有哪些时间限制？", category="hr"),
+        QuickQuestion(text="病假需要哪些证明材料？", category="hr"),
+    ]
+    if category is None:
+        return presets
+    return [q for q in presets if q.category == category]

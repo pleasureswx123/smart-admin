@@ -49,3 +49,17 @@ class AskResponse(BaseModel):
 
     answer: str
     citations: list[Citation] = Field(default_factory=list)
+
+
+class CategoryItem(BaseModel):
+    """分类聚合项（侧栏展示）。"""
+
+    category: str
+    file_count: int
+
+
+class QuickQuestion(BaseModel):
+    """常用问题项。"""
+
+    text: str
+    category: str | None = None
