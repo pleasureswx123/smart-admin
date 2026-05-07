@@ -417,12 +417,12 @@ CREATE TABLE policy_chunk (
     chunk_index   INT NOT NULL,
     content       TEXT NOT NULL,
     metadata      JSONB DEFAULT '{}'::jsonb,
-    embedding     VECTOR(2560),
+    embedding     VECTOR(2048),
     created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_policy_chunk_embedding
-    ON policy_chunk USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+-- 注：embedding 维度 2048 超过 pgvector ivfflat/hnsw 的 2000 维上限，
+-- MVP 阶段不建 ANN 索引（用顺序扫描）；后续若需 ANN 可切换到 halfvec(2048) + HNSW。
 CREATE INDEX idx_policy_chunk_file_id ON policy_chunk(file_id);
 CREATE INDEX idx_policy_chunk_metadata_gin ON policy_chunk USING GIN(metadata);
 ```
@@ -456,7 +456,7 @@ class PolicyChunk(SQLModel, table=True):
     content: str
     page: int | None
     metadata: dict = Field(sa_column=Column(JSONB))
-    embedding: list[float] = Field(sa_column=Column(Vector(2560)))
+    embedding: list[float] = Field(sa_column=Column(Vector(2048)))
 ```
 
 ### 6.2 公文（document）
@@ -555,7 +555,7 @@ class ChatMessage(SQLModel, table=True):
 
 | 表 | 索引 |
 | :--- | :--- |
-| `policy_chunk` | `(file_id)`, `embedding ivfflat`, `metadata GIN` |
+| `policy_chunk` | `(file_id)`, `metadata GIN`（2048 维超 pgvector ANN 上限，MVP 不建 ANN 索引）|
 | `visitor_record` | `(status, created_at DESC)`, `(host_employee_id, created_at DESC)` |
 | `employee` | `(name_pinyin text_pattern_ops)`, `(department)` |
 | `chat_message` | `(session_id, created_at)` |
