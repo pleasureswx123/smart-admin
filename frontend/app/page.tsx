@@ -44,12 +44,12 @@ export default function HomePage() {
           <div className="mx-auto max-w-3xl text-center">
             <div className="mb-6 inline-flex items-center gap-2 rounded-full border bg-background px-4 py-1.5 text-sm">
               <Sparkles className="size-4 text-primary" />
-              <span>企业智能办公平台</span>
+              <span>莱博塔 - 企业智能办公平台</span>
             </div>
             <div className="mb-6 flex justify-center">
-              <img src="/logo.svg" alt="Logo" className="h-16 sm:h-20 dark:invert" />
+              <img src="/logo.svg" alt="Logo" className="h-16 sm:h-20 invert" />
             </div>
-            <h1 className="text-balance text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
+            <h1 className="text-balance text-2xl font-bold tracking-tight sm:text-3xl lg:text-4xl">
               灵办中心
             </h1>
             <p className="mt-6 text-pretty text-lg text-muted-foreground sm:text-xl">

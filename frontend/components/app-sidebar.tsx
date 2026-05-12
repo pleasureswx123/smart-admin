@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
+import Image from "next/image"
 import { usePathname } from "next/navigation"
 import {
   BookOpen,
@@ -68,12 +69,24 @@ export function AppSidebar() {
 
   return (
     <Sidebar>
-      <SidebarHeader className="border-b border-sidebar-border px-4 py-4">
-        <Link href="/" className="flex items-center gap-3">
-          <div className="flex size-9 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-            <Building2 className="size-5" />
+
+      <SidebarHeader className="border-b border-sidebar-border px-4 py-4 pt-0">
+        <Link href="/" className="flex flex-col gap-3">
+          <div className="flex h-14 shrink-0 items-center justify-center bg-black px-4 py-2 border-b border-sidebar-border">
+            <div className="relative w-[80%]" style={{ aspectRatio: '120/26' }}>
+              <Image
+                  src="/logo.svg"
+                  alt="莱博塔Logo"
+                  fill
+                  className="object-contain"
+                  priority
+              />
+            </div>
           </div>
-          <div className="flex flex-col">
+          {/*<div className="flex size-9 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+            <Building2 className="size-5" />
+          </div>*/}
+          <div className="flex items-center flex-col">
             <span className="text-sm font-semibold text-sidebar-foreground">
               企业智能办公
             </span>
