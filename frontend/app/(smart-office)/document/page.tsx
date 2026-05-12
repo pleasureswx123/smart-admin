@@ -450,25 +450,38 @@ export default function DocumentPage() {
         {/* 左：指令配置 */}
         <div className="w-[400px] flex-shrink-0 border-r">
           <ScrollArea className="h-full">
-            <div className="space-y-6 p-6">
-              <div className="space-y-2">
-                <Label htmlFor="topic">公文主题</Label>
-                <Input id="topic" placeholder="例如：关于办公区禁烟的通知" value={topic} onChange={(e) => setTopic(e.target.value)} />
+            <div className="space-y-5 p-5">
+
+              {/* 流程引导 */}
+              <div className="rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground leading-5">
+                <span className="font-medium text-foreground">使用流程：</span>
+                选择上方模板 → 填写主题与关键词 → 点击
+                <span className="font-medium text-foreground">「AI 起草」</span>
+                生成公文 → 审计结果自动展示，手动修改后可点击
+                <span className="font-medium text-foreground">「重新审计」</span>
+                复查。
               </div>
 
               <div className="space-y-2">
-                <Label>关键词</Label>
+                <Label htmlFor="topic">公文主题 <span className="text-destructive">*</span></Label>
+                <Input id="topic" placeholder="例如：关于2025年端午节放假安排的通知" value={topic} onChange={(e) => setTopic(e.target.value)} />
+                <p className="text-xs text-muted-foreground">一句话描述公文要传达的核心事项</p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>关键词 <span className="text-xs font-normal text-muted-foreground">（可选）</span></Label>
                 <div className="flex gap-2">
                   <Input
-                    placeholder="输入关键词后回车"
+                    placeholder="输入后按回车添加"
                     value={keywordInput}
                     onChange={(e) => setKeywordInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddKeyword() } }}
                   />
                   <Button variant="outline" size="icon" onClick={handleAddKeyword}><Tag className="size-4" /></Button>
                 </div>
+                <p className="text-xs text-muted-foreground">AI 会在正文中重点体现这些词</p>
                 {keywords.length > 0 && (
-                  <div className="flex flex-wrap gap-2 pt-2">
+                  <div className="flex flex-wrap gap-2 pt-1">
                     {keywords.map((k) => (
                       <Badge key={k} variant="secondary" className="gap-1">
                         {k}
@@ -482,7 +495,7 @@ export default function DocumentPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>语气选择</Label>
+                <Label>语气风格</Label>
                 <div className="flex gap-2">
                   {toneOptions.map((option) => (
                     <Badge key={option.value} variant={tone === option.value ? "default" : "outline"} className="cursor-pointer px-4 py-2" onClick={() => setTone(option.value)}>
@@ -495,63 +508,86 @@ export default function DocumentPage() {
 
               <Separator />
 
-              <div className="flex gap-3">
-                <Button className="flex-1 gap-2" onClick={handleGenerate} disabled={isGenerating || !topic.trim()}>
-                  {isGenerating ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-                  开始起草
-                </Button>
-                <Button variant="outline" className="flex-1 gap-2" onClick={handleAuditOnly} disabled={isGenerating || !content.trim()}>
-                  仅审计
-                </Button>
-              </div>
+              {/* 主操作按钮 */}
+              <Button className="w-full gap-2" onClick={handleGenerate} disabled={isGenerating || !topic.trim()}>
+                {isGenerating ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                {isGenerating ? "AI 正在起草…" : "AI 起草"}
+              </Button>
 
-              {(stage || round > 0) && (
-                <div className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
-                  <div>当前阶段：{stage || "—"}</div>
-                  <div>反思轮次：{round}</div>
-                  {draftId && <div>草稿 ID：{draftId.slice(0, 8)}…</div>}
+              {/* 生成中：进度提示 */}
+              {isGenerating && (
+                <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <Loader2 className="size-3 animate-spin" />
+                    <span>{stage ? `阶段：${stage}` : "正在处理…"}</span>
+                  </div>
+                  {round > 0 && <div>已反思修订 {round} 轮</div>}
                 </div>
               )}
+
+              {/* 生成完成后：次级操作 */}
+              {!isGenerating && content && (
+                <div className="space-y-2">
+                  <Button variant="outline" className="w-full gap-2" onClick={handleAuditOnly}>
+                    <CheckCircle className="size-4" />
+                    重新审计
+                  </Button>
+                  <p className="text-xs text-muted-foreground text-center">
+                    手动修改内容后，可点击此按钮重新检查合规性
+                  </p>
+                </div>
+              )}
+
             </div>
           </ScrollArea>
         </div>
 
         {/* 右：预览 + 审计 */}
         <div className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex-1 overflow-hidden border-b">
+          <div className="flex-1 min-h-0 border-b">
             <div className="flex h-full flex-col">
-              <div className="flex items-center justify-between border-b px-4 py-2">
-                <span className="text-sm font-medium">内容预览（Markdown）</span>
+              <div className="flex items-center justify-between border-b px-4 py-2 flex-shrink-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">公文草稿</span>
+                  {draftId && <Badge variant="secondary" className="text-xs">已保存</Badge>}
+                </div>
                 <Button variant="ghost" size="sm" onClick={handleCopy} disabled={!content}>
                   <Copy className="mr-1 size-3.5" />复制
                 </Button>
               </div>
-              <ScrollArea className="flex-1">
-                <div className="p-4">
-                  {!content && !isGenerating ? (
-                    <div className="flex items-center justify-center py-20">
-                      <div className="text-center text-muted-foreground">
-                        <FileText className="mx-auto mb-4 size-12 opacity-30" />
-                        <p>填写左侧配置信息</p>
-                        <p className="text-sm">点击"开始起草"生成公文</p>
-                      </div>
+              {/* 修复滚动：用 overflow-y-auto 替代 ScrollArea，避免 Textarea 撑开父容器 */}
+              <div className="flex-1 overflow-y-auto min-h-0 p-4">
+                {!content && !isGenerating ? (
+                  <div className="flex h-full items-center justify-center">
+                    <div className="text-center text-muted-foreground">
+                      <FileText className="mx-auto mb-3 size-10 opacity-30" />
+                      <p className="text-sm">选择模板，填写主题</p>
+                      <p className="text-xs mt-1">点击「AI 起草」生成公文</p>
                     </div>
-                  ) : (
-                    <Textarea value={content} onChange={(e) => setContent(e.target.value)}
-                      className="min-h-[400px] resize-none border-0 bg-transparent p-0 focus-visible:ring-0"
-                      placeholder={isGenerating ? "AI 正在生成…" : ""} />
-                  )}
-                </div>
-              </ScrollArea>
+                  </div>
+                ) : (
+                  <Textarea
+                    value={content}
+                    onChange={(e) => setContent(e.target.value)}
+                    className="h-full min-h-[300px] resize-none border-0 bg-transparent p-0 focus-visible:ring-0 text-sm"
+                    placeholder={isGenerating ? "AI 正在生成内容，请稍候…" : ""}
+                  />
+                )}
+              </div>
             </div>
           </div>
 
-          <div className="h-[200px] flex-shrink-0 overflow-hidden">
+          <div className="h-[180px] flex-shrink-0 overflow-hidden">
             <div className="flex h-full flex-col">
-              <div className="flex items-center border-b px-4 py-2">
-                <span className="text-sm font-medium">AI 审计反馈</span>
+              <div className="flex items-center justify-between border-b px-4 py-2">
+                <span className="text-sm font-medium">AI 审计结果</span>
+                {audits.length > 0 && (
+                  <Badge variant={audits.some(a => a.type === "warning") ? "destructive" : "secondary"} className="text-xs">
+                    {audits.some(a => a.type === "warning") ? "存在问题" : "审计通过"}
+                  </Badge>
+                )}
               </div>
-              <ScrollArea className="flex-1">
+              <div className="flex-1 overflow-y-auto min-h-0">
                 <div className="space-y-3 p-4">
                   {audits.length === 0 ? (
                     <div className="flex items-center justify-center py-8 text-center text-sm text-muted-foreground">生成公文后将显示审计结果</div>
@@ -568,7 +604,7 @@ export default function DocumentPage() {
                     ))
                   )}
                 </div>
-              </ScrollArea>
+              </div>
             </div>
           </div>
 
