@@ -17,12 +17,16 @@ from app.schemas.document import (
     AuditItem,
     AuditOnlyRequest,
     AuditOnlyResponse,
+    DocTypeItem,
     DraftRead,
     DraftRequest,
     DraftResponse,
     ExportPdfResponse,
     SaveTemplateRequest,
+    TemplateCreate,
     TemplateRead,
+    TemplateUpdate,
+    TypeRename,
 )
 from app.services import document_service
 
@@ -34,6 +38,42 @@ def _format_sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
+# ── 文档类型 CRUD ──────────────────────────────────────────────────────────
+
+@router.get("/types", response_model=list[DocTypeItem])
+async def list_types(session: SessionDep) -> list[DocTypeItem]:
+    """列举所有文档类型及对应模板数量。"""
+    rows = await doc_repo.list_types(session)
+    return [DocTypeItem(**r) for r in rows]
+
+
+@router.patch("/types/{type_name}", response_model=DocTypeItem)
+async def rename_type(
+    session: SessionDep, type_name: str, payload: TypeRename
+) -> DocTypeItem:
+    """重命名文档类型（批量更新该类型下所有模板）。"""
+    count = await doc_repo.rename_type(session, type_name, payload.new_name)
+    if count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="类型不存在或无模板"
+        )
+    await session.commit()
+    return DocTypeItem(type=payload.new_name, template_count=count)
+
+
+@router.delete("/types/{type_name}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_type(session: SessionDep, type_name: str) -> None:
+    """删除文档类型及其下所有模板。"""
+    count = await doc_repo.delete_type(session, type_name)
+    if count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="类型不存在或无模板"
+        )
+    await session.commit()
+
+
+# ── 模板 CRUD ──────────────────────────────────────────────────────────────
+
 @router.get("/templates", response_model=list[TemplateRead])
 async def list_templates(
     session: SessionDep,
@@ -41,6 +81,48 @@ async def list_templates(
 ) -> list[TemplateRead]:
     rows = await document_service.list_templates(session, type_=type)
     return [TemplateRead.model_validate(r) for r in rows]
+
+
+@router.post("/templates", response_model=TemplateRead, status_code=status.HTTP_201_CREATED)
+async def create_template(session: SessionDep, payload: TemplateCreate) -> TemplateRead:
+    """创建新模板（支持直接录入 Markdown 正文）。"""
+    tpl = await doc_repo.create_template(
+        session,
+        type_=payload.type,
+        name=payload.name,
+        description=payload.description,
+        body=payload.body,
+        is_system=payload.is_system,
+    )
+    await session.commit()
+    return TemplateRead.model_validate(tpl)
+
+
+@router.patch("/templates/{template_id}", response_model=TemplateRead)
+async def update_template(
+    session: SessionDep, template_id: UUID, payload: TemplateUpdate
+) -> TemplateRead:
+    """更新模板的名称、描述或正文。"""
+    tpl = await doc_repo.update_template(
+        session,
+        template_id,
+        name=payload.name,
+        description=payload.description,
+        body=payload.body,
+    )
+    if tpl is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="模板不存在")
+    await session.commit()
+    return TemplateRead.model_validate(tpl)
+
+
+@router.delete("/templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_template(session: SessionDep, template_id: UUID) -> None:
+    """删除单个模板。"""
+    tpl = await doc_repo.delete_template(session, template_id)
+    if tpl is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="模板不存在")
+    await session.commit()
 
 
 @router.post(

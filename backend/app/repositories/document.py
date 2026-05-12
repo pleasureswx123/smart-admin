@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import DocumentDraft, DocumentTemplate
@@ -79,3 +79,75 @@ async def update_draft(
     await session.flush()
     await session.refresh(draft)
     return draft
+
+
+# ── 模板 CRUD ──────────────────────────────────────────────────────────────
+
+async def update_template(
+    session: AsyncSession,
+    template_id: UUID,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    body: str | None = None,
+) -> DocumentTemplate | None:
+    """更新模板字段（仅修改传入的非 None 字段）。"""
+    tpl = await session.get(DocumentTemplate, template_id)
+    if tpl is None:
+        return None
+    if name is not None:
+        tpl.name = name
+    if description is not None:
+        tpl.description = description
+    if body is not None:
+        tpl.body = body
+    await session.flush()
+    await session.refresh(tpl)
+    return tpl
+
+
+async def delete_template(
+    session: AsyncSession, template_id: UUID
+) -> DocumentTemplate | None:
+    """删除单个模板；返回被删除记录（不存在则 None）。"""
+    tpl = await session.get(DocumentTemplate, template_id)
+    if tpl is None:
+        return None
+    await session.delete(tpl)
+    await session.flush()
+    return tpl
+
+
+# ── 文档类型 CRUD（基于 template.type 字段聚合）────────────────────────────
+
+async def list_types(session: AsyncSession) -> list[dict]:
+    """返回各 type 的名称及对应模板数量（按 type 排序）。"""
+    stmt = (
+        select(DocumentTemplate.type, func.count(DocumentTemplate.id).label("template_count"))
+        .group_by(DocumentTemplate.type)
+        .order_by(DocumentTemplate.type)
+    )
+    result = await session.execute(stmt)
+    return [{"type": row.type, "template_count": row.template_count} for row in result]
+
+
+async def rename_type(
+    session: AsyncSession, old_name: str, new_name: str
+) -> int:
+    """将所有 type=old_name 的模板改为 new_name；返回影响行数。"""
+    stmt = (
+        update(DocumentTemplate)
+        .where(DocumentTemplate.type == old_name)
+        .values(type=new_name)
+    )
+    result = await session.execute(stmt)
+    await session.flush()
+    return result.rowcount  # type: ignore[return-value]
+
+
+async def delete_type(session: AsyncSession, type_name: str) -> int:
+    """删除某类型下的所有模板；返回删除行数。"""
+    stmt = delete(DocumentTemplate).where(DocumentTemplate.type == type_name)
+    result = await session.execute(stmt)
+    await session.flush()
+    return result.rowcount  # type: ignore[return-value]

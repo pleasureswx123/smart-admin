@@ -2,14 +2,21 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-DocType = Literal["notice", "request", "reward", "meeting"]
-DocTone = Literal["formal", "friendly", "strict"]
-AuditLevel = Literal["success", "info", "warning"]
+# DocType 改为动态字符串，支持中文分类名（如"行政通知"）
+DocType = str
+DocTone = str
+AuditLevel = str
+
+
+class DocTypeItem(BaseModel):
+    """文档类型列表项（带模板数量）。"""
+
+    type: str
+    template_count: int
 
 
 class TemplateRead(BaseModel):
@@ -25,20 +32,44 @@ class TemplateRead(BaseModel):
     is_system: bool
 
 
+class TemplateCreate(BaseModel):
+    """创建模板请求体。"""
+
+    type: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=128)
+    description: str = Field(default="", max_length=512)
+    body: str = Field(min_length=1)
+    is_system: bool = False
+
+
+class TemplateUpdate(BaseModel):
+    """更新模板请求体（所有字段可选）。"""
+
+    name: str | None = Field(default=None, max_length=128)
+    description: str | None = Field(default=None, max_length=512)
+    body: str | None = None
+
+
+class TypeRename(BaseModel):
+    """重命名文档类型请求体。"""
+
+    new_name: str = Field(min_length=1, max_length=64)
+
+
 class DraftRequest(BaseModel):
     """生成草稿请求。"""
 
-    type: DocType
+    type: str
     template_id: UUID | None = None
     topic: str = Field(min_length=1, max_length=512)
     keywords: list[str] = Field(default_factory=list)
-    tone: DocTone = "formal"
+    tone: str = "formal"
 
 
 class AuditItem(BaseModel):
     """审计单项。"""
 
-    type: AuditLevel
+    type: str
     title: str
     description: str = ""
 
@@ -58,13 +89,13 @@ class OptimizeRequest(BaseModel):
 
     content: str = Field(min_length=1)
     feedback: list[AuditItem] = Field(default_factory=list)
-    tone: DocTone = "formal"
+    tone: str = "formal"
 
 
 class AuditOnlyRequest(BaseModel):
     """仅审计：传入完整文本，返回审计结果。"""
 
-    type: DocType
+    type: str
     content: str = Field(min_length=1)
 
 

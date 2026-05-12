@@ -20,11 +20,15 @@ docker compose -f deploy/docker-compose.yml up postgres redis -d
 cd backend
 uv run alembic upgrade head
 uv run python scripts/seed_policy.py
+uv run python scripts/seed_document.py
 uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-> `seed_policy.py` 为**幂等脚本**，重复运行会自动跳过已存在记录，仅首次执行时写入制度示例文档。
-> 执行前请确认 `backend/.env` 中 `ARK_API_KEY` 已配置，脚本需调用 embedding 服务完成向量入库。
+> 两个 seed 脚本均为**幂等脚本**，重复运行会自动跳过已存在记录：
+> - `seed_policy.py`：写入制度万事通的 9 篇知识库文档（需调用 embedding 服务，请确认 `backend/.env` 中 `ARK_API_KEY` 已配置）
+> - `seed_document.py`：写入公文 Copilot 的 9 篇模板（行政通知 / 内部请示 / 处罚奖励各 3 篇）
+>
+> 日常重启只需执行 `alembic upgrade head` + `uvicorn`，seed 步骤可跳过。
 
 后端接口地址：http://127.0.0.1:8000  
 API 文档：http://127.0.0.1:8000/docs
@@ -102,7 +106,7 @@ smart-admin/
 ├── backend/          # FastAPI 后端
 │   ├── app/          # 应用代码（api/ai/models/services）
 │   ├── alembic/      # 数据库迁移
-│   └── scripts/      # entrypoint.sh、seed_policy.py 等
+│   └── scripts/      # entrypoint.sh、seed_policy.py、seed_document.py 等
 ├── frontend/         # Next.js 前端
 ├── deploy/           # docker-compose + nginx 配置
 ├── scripts/          # e2e.ps1 冒烟脚本

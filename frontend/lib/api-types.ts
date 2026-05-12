@@ -35,9 +35,16 @@ export interface PolicyCitation {
 }
 
 // ===== Document =====
-export type DocType = "notice" | "request" | "reward" | "meeting"
+// DocType 改为动态字符串，支持中文类型名（如"行政通知"）
+export type DocType = string
 export type DocTone = "formal" | "friendly" | "strict"
 export type AuditLevel = "success" | "info" | "warning"
+
+/** 文档类型列表项（含模板数量） */
+export interface DocTypeItem {
+  type: string
+  template_count: number
+}
 
 export interface DocTemplate {
   id: string
