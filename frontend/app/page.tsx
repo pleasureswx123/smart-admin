@@ -47,7 +47,7 @@ export default function HomePage() {
               <span>企业智能办公平台</span>
             </div>
             <div className="mb-6 flex justify-center">
-              <img src="/logo.svg" alt="Logo" className="h-16 sm:h-20" />
+              <img src="/logo.svg" alt="Logo" className="h-16 sm:h-20 dark:invert" />
             </div>
             <h1 className="text-balance text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
               灵办中心
