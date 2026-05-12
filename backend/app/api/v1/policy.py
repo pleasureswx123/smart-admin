@@ -220,10 +220,20 @@ async def list_quick_questions(
 ) -> list[QuickQuestion]:
     """常用问题（MVP：硬编码；后续可改为 DB / 配置文件驱动）。"""
     presets: list[QuickQuestion] = [
-        QuickQuestion(text="公司年假多少天？", category="hr"),
-        QuickQuestion(text="周末加班工资怎么算？", category="hr"),
-        QuickQuestion(text="差旅报销有哪些时间限制？", category="hr"),
-        QuickQuestion(text="病假需要哪些证明材料？", category="hr"),
+        # 人事类
+        QuickQuestion(text="公司年假有多少天？", category="人事类"),
+        QuickQuestion(text="新员工入职需要提交哪些材料？", category="人事类"),
+        QuickQuestion(text="病假工资如何发放？", category="人事类"),
+        QuickQuestion(text="加班工资怎么计算？", category="人事类"),
+        # 财务类
+        QuickQuestion(text="出差住宿费标准是多少？", category="财务类"),
+        QuickQuestion(text="差旅报销需要哪些凭证？", category="财务类"),
+        QuickQuestion(text="费用报销超过多少需要总经理审批？", category="财务类"),
+        QuickQuestion(text="报销申请有时间限制吗？", category="财务类"),
+        # 行政类
+        QuickQuestion(text="如何预订会议室？", category="行政类"),
+        QuickQuestion(text="公务用车如何申请？", category="行政类"),
+        QuickQuestion(text="办公用品如何申领？", category="行政类"),
     ]
     if category is None:
         return presets

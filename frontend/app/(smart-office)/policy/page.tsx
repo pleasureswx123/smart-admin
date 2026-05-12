@@ -50,11 +50,16 @@ export default function PolicyPage() {
   const [quickQuestions, setQuickQuestions] = React.useState<string[]>([])
   const [uploading, setUploading] = React.useState(false)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
-  const messagesEndRef = React.useRef<HTMLDivElement>(null)
+  // 使用 container ref 直接控制滚动，比 scrollIntoView 在自定义 ScrollArea 内更可靠
+  const messagesContainerRef = React.useRef<HTMLDivElement>(null)
   const abortRef = React.useRef<AbortController | null>(null)
 
   React.useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    const el = messagesContainerRef.current
+    if (el) {
+      // 每次消息列表变化时，立即滚动到底部
+      el.scrollTop = el.scrollHeight
+    }
   }, [messages])
 
   const refreshKnowledge = React.useCallback(async () => {
@@ -185,7 +190,8 @@ export default function PolicyPage() {
           </Button>
         </div>
 
-        <ScrollArea className="flex-1 p-4">
+        {/* 用普通 div overflow-y-auto 代替 ScrollArea，确保 scrollTop 控制生效 */}
+        <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4">
           <div className="mx-auto max-w-3xl space-y-6">
             {messages.map((message) => (
               <MessageBubble
@@ -194,9 +200,8 @@ export default function PolicyPage() {
                 onCite={setSelectedCitation}
               />
             ))}
-            <div ref={messagesEndRef} />
           </div>
-        </ScrollArea>
+        </div>
 
         {quickQuestions.length > 0 && (
           <div className="border-t bg-muted/30 px-4 py-3">
