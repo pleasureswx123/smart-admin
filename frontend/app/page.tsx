@@ -46,6 +46,9 @@ export default function HomePage() {
               <Sparkles className="size-4 text-primary" />
               <span>企业智能办公平台</span>
             </div>
+            <div className="mb-6 flex justify-center">
+              <img src="/logo.svg" alt="Logo" className="h-16 sm:h-20" />
+            </div>
             <h1 className="text-balance text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
               灵办中心
             </h1>
@@ -104,7 +107,7 @@ export default function HomePage() {
       </section>
 
       {/* Stats Section */}
-      <section className="border-t bg-muted/30">
+      {/*<section className="border-t bg-muted/30">
         <div className="container mx-auto px-4 py-16">
           <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
             <div className="text-center">
@@ -125,12 +128,12 @@ export default function HomePage() {
             </div>
           </div>
         </div>
-      </section>
+      </section>*/}
 
       {/* Footer */}
       <footer className="border-t py-8">
         <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
-          <p>&copy; 2024 灵办中心 - 企业智能办公平台</p>
+          <p>&copy; 2026 北京莱博塔科技有限公司 - 企业智能办公平台</p>
         </div>
       </footer>
     </div>
