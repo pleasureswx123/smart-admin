@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     ARK_VISION_MODEL: str = "doubao-seed-1-6-flash-250828"
     ARK_EMBEDDING_MODEL: str = "doubao-embedding-text-240715"
     ARK_EMBEDDING_DIM: int = 2560
+    # LLM 调用超时（秒）：团建方案/公文生成需生成大量 JSON/文本，建议 ≥120
+    ARK_TIMEOUT: int = 120
 
     # ===== 存储 =====
     POLICY_UPLOAD_DIR: str = "data/uploads/policy"

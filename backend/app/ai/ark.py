@@ -13,13 +13,18 @@ from app.core.config import settings
 
 @lru_cache
 def get_chat_model() -> ChatOpenAI:
-    """火山方舟 chat 模型（OpenAI 兼容）。"""
+    """火山方舟 chat 模型（OpenAI 兼容）。
+
+    timeout 从配置读取（默认 120s）：
+      - 团建方案生成需输出完整 A/B JSON（通常 40~90s）
+      - 公文起草/审计同样需要较长时间
+    """
     return ChatOpenAI(
         model=settings.ARK_CHAT_MODEL,
         api_key=settings.ARK_API_KEY,
         base_url=settings.ARK_BASE_URL,
         temperature=0.3,
-        timeout=30,
+        timeout=settings.ARK_TIMEOUT,
         max_retries=2,
     )
 
