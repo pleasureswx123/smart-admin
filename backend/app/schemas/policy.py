@@ -64,3 +64,25 @@ class QuickQuestion(BaseModel):
 
     text: str
     category: str | None = None
+
+
+class KnowledgeFileUpdate(BaseModel):
+    """文件元数据更新（仅更新名称或分类，不重建 embedding）。"""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    category: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class CategoryRename(BaseModel):
+    """分类重命名请求体。"""
+
+    new_name: str = Field(min_length=1, max_length=64)
+
+
+class PolicyFileCreate(BaseModel):
+    """直接录入 Markdown 内容创建制度文档（无需上传文件）。"""
+
+    name: str = Field(min_length=1, max_length=255, description="文档显示名称，自动补 .md 后缀")
+    category: str = Field(min_length=1, max_length=64, description="所属分类")
+    content: str = Field(min_length=1, description="Markdown 正文内容")
+    access_level: str = Field(default="public", description="访问级别")

@@ -28,6 +28,13 @@ export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
+/** 获取纯文本响应（如 Markdown 原文）。 */
+export async function apiGetText(path: string, init?: RequestInit): Promise<string> {
+  const res = await fetch(`${API_BASE}${path}`, { ...init, method: "GET" })
+  if (!res.ok) throw new ApiError(res.status, await _parseError(res))
+  return res.text()
+}
+
 export async function apiPost<T>(
   path: string,
   body?: unknown,
@@ -36,6 +43,21 @@ export async function apiPost<T>(
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
     method: "POST",
+    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  if (!res.ok) throw new ApiError(res.status, await _parseError(res))
+  return res.json() as Promise<T>
+}
+
+export async function apiPatch<T>(
+  path: string,
+  body?: unknown,
+  init?: RequestInit
+): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    method: "PATCH",
     headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   })

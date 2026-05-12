@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.policy import KnowledgeFile, PolicyChunk
@@ -150,6 +150,56 @@ async def list_categories_with_file_count(
     )
     result = await session.execute(stmt)
     return [(row[0], int(row[1])) for row in result.all()]
+
+
+async def update_knowledge_file(
+    session: AsyncSession,
+    file_id: UUID,
+    *,
+    name: str | None = None,
+    category: str | None = None,
+) -> KnowledgeFile | None:
+    """更新文件名称或所属分类（不重建 embedding）。"""
+    file = await session.get(KnowledgeFile, file_id)
+    if file is None:
+        return None
+    if name is not None:
+        file.name = name
+    if category is not None:
+        file.category = category
+    await session.flush()
+    return file
+
+
+async def update_files_category(
+    session: AsyncSession,
+    old_category: str,
+    new_category: str,
+) -> int:
+    """批量将 old_category 下所有文件改为 new_category，返回受影响行数。"""
+    result = await session.execute(
+        sa_update(KnowledgeFile)
+        .where(KnowledgeFile.category == old_category)
+        .values(category=new_category)
+    )
+    await session.flush()
+    return result.rowcount  # type: ignore[return-value]
+
+
+async def delete_files_by_category(
+    session: AsyncSession,
+    category: str,
+) -> list[KnowledgeFile]:
+    """删除分类下所有文件及其 chunks；返回被删文件列表（供调用方清理物理文件）。"""
+    result = await session.execute(
+        select(KnowledgeFile).where(KnowledgeFile.category == category)
+    )
+    files = list(result.scalars().all())
+    for file in files:
+        await session.execute(delete(PolicyChunk).where(PolicyChunk.file_id == file.id))
+        await session.delete(file)
+    await session.flush()
+    return files
 
 
 async def delete_knowledge_file(

@@ -18,22 +18,28 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from app.ai.graphs.policy_rag import run_policy_rag, stream_policy_rag
 from app.api.deps import SessionDep
 from app.core.config import settings
 from app.repositories.policy import (
+    delete_files_by_category,
     delete_knowledge_file,
     get_knowledge_file,
     list_categories_with_file_count,
     list_knowledge_files,
+    update_files_category,
+    update_knowledge_file,
 )
 from app.schemas.policy import (
     AskRequest,
     AskResponse,
     CategoryItem,
+    CategoryRename,
     KnowledgeFileRead,
+    KnowledgeFileUpdate,
+    PolicyFileCreate,
     QuickQuestion,
 )
 from app.services.policy_service import ingest_markdown_file
@@ -158,6 +164,49 @@ async def chat_with_policy(
     )
 
 
+@router.post(
+    "/files/text",
+    response_model=KnowledgeFileRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_file_from_text(
+    session: SessionDep,
+    payload: PolicyFileCreate,
+) -> KnowledgeFileRead:
+    """直接录入 Markdown 内容创建制度文档（自动完成 embedding 入库）。"""
+    upload_dir = Path(settings.POLICY_UPLOAD_DIR)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    # 确保显示名以 .md 结尾
+    display_name = payload.name if payload.name.endswith(".md") else f"{payload.name}.md"
+    saved_name = f"{uuid4().hex}.md"
+    target = upload_dir / saved_name
+    target.write_text(payload.content, encoding="utf-8")
+
+    try:
+        file_id = await ingest_markdown_file(
+            session,
+            file_path=target,
+            name=display_name,
+            category=payload.category,
+            access_level=payload.access_level,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.exception("policy.create_text.ingest_failed", error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"入库失败：{exc.__class__.__name__}",
+        ) from exc
+
+    record = await get_knowledge_file(session, file_id)
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="入库后未能加载文件记录",
+        )
+    return KnowledgeFileRead.model_validate(record)
+
+
 @router.get("/files", response_model=list[KnowledgeFileRead])
 async def list_files(
     session: SessionDep,
@@ -186,6 +235,22 @@ async def get_file(session: SessionDep, file_id: UUID) -> KnowledgeFileRead:
     return KnowledgeFileRead.model_validate(record)
 
 
+@router.get("/files/{file_id}/content", response_class=PlainTextResponse)
+async def get_file_content(session: SessionDep, file_id: UUID) -> str:
+    """返回制度文档的原始 Markdown 内容（plain text）。"""
+    record = await get_knowledge_file(session, file_id)
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在"
+        )
+    physical = Path(record.file_path)
+    if not physical.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="物理文件不存在（可能已被清理）"
+        )
+    return physical.read_text(encoding="utf-8")
+
+
 @router.delete("/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_file(session: SessionDep, file_id: UUID) -> None:
     """删除文件 + 全部 chunk + 物理文件（best-effort）。"""
@@ -206,6 +271,60 @@ async def delete_file(session: SessionDep, file_id: UUID) -> None:
                 path=str(physical),
                 error=str(exc),
             )
+
+
+@router.patch("/files/{file_id}", response_model=KnowledgeFileRead)
+async def update_file_meta(
+    session: SessionDep,
+    file_id: UUID,
+    payload: KnowledgeFileUpdate,
+) -> KnowledgeFileRead:
+    """更新文件名称或所属分类（不重建 embedding）。"""
+    record = await update_knowledge_file(
+        session, file_id, name=payload.name, category=payload.category
+    )
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在")
+    await session.commit()
+    return KnowledgeFileRead.model_validate(record)
+
+
+@router.patch("/categories/{name}", response_model=dict)
+async def rename_category(
+    session: SessionDep,
+    name: str,
+    payload: CategoryRename,
+) -> dict:
+    """重命名分类（批量更新该分类下所有文件记录）。"""
+    count = await update_files_category(session, name, payload.new_name)
+    if count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="分类不存在或无文件"
+        )
+    await session.commit()
+    return {"updated": count, "new_name": payload.new_name}
+
+
+@router.delete("/categories/{name}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_category(session: SessionDep, name: str) -> None:
+    """删除分类及其下所有文件（含 chunks + 物理文件）。"""
+    files = await delete_files_by_category(session, name)
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="分类不存在或无文件"
+        )
+    await session.commit()
+    for f in files:
+        physical = Path(f.file_path)
+        if physical.is_file():
+            try:
+                physical.unlink()
+            except OSError as exc:
+                log.warning(
+                    "policy.delete_category.unlink_failed",
+                    path=str(physical),
+                    error=str(exc),
+                )
 
 
 @router.get("/categories", response_model=list[CategoryItem])
