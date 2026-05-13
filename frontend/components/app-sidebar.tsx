@@ -88,7 +88,7 @@ export function AppSidebar() {
           </div>*/}
           <div className="flex items-center flex-col">
             <span className="text-sm font-semibold text-sidebar-foreground">
-              企业智能办公
+              灵办中心 - 企业智能办公
             </span>
             <span className="text-xs text-sidebar-foreground/60">
               Enterprise Smart Office

@@ -10,7 +10,7 @@ services:
     volumes:
       - ../data/postgres:/var/lib/postgresql/data
     ports:
-      - "5432:5432"      # 仅 dev 暴露；生产请删除
+      - "5434:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -25,7 +25,7 @@ services:
     volumes:
       - ../data/redis:/data
     ports:
-      - "6379:6379"      # 仅 dev 暴露；生产请删除
+      - "6381:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -78,7 +78,7 @@ services:
     container_name: smart-admin-nginx
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "8081:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
