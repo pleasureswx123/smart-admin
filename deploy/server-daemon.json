@@ -1,0 +1,15 @@
+{
+  "registry-mirrors": [
+    "https://docker.1ms.run",
+    "https://docker.xuanyuan.me",
+    "https://docker.1panel.live",
+    "https://hub.atomgit.com",
+    "https://docker.m.daocloud.io",
+    "https://docker.mirrors.ustc.edu.cn"
+  ],
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "100m",
+    "max-file": "3"
+  }
+}

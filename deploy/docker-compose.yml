@@ -1,3 +1,6 @@
+# Fix docker compose project name to avoid colliding with other deploy/ projects
+name: smart-admin
+
 services:
   postgres:
     image: pgvector/pgvector:pg16

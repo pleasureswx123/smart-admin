@@ -81,3 +81,7 @@ docker-compose.override.yml
 .cache/
 .parcel-cache/
 .next/cache/
+ 
+# ===== 部署密钥（服务器端 .env） =====
+deploy/server.env
+
