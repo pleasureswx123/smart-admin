@@ -18,6 +18,7 @@ async def create_plan(
     activity_types: list[str],
     plan_a: dict,
     plan_b: dict,
+    plans: list[dict] | None = None,
     user_id: UUID | None = None,
 ) -> EventPlan:
     plan = EventPlan(
@@ -28,6 +29,7 @@ async def create_plan(
         activity_types=activity_types,
         plan_a=plan_a,
         plan_b=plan_b,
+        plans=plans or [plan_a, plan_b],
     )
     session.add(plan)
     await session.flush()

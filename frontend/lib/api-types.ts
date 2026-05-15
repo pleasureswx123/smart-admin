@@ -177,5 +177,6 @@ export interface PlanRead {
   activity_types: string[]
   plan_a: PlanDetail
   plan_b: PlanDetail
+  plans: PlanDetail[]
   created_at: string
 }

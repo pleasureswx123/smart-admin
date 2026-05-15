@@ -73,6 +73,7 @@ class PlanRead(BaseModel):
     activity_types: list[str]
     plan_a: dict
     plan_b: dict
+    plans: list[dict] = Field(default_factory=list)
     created_at: datetime
 
 

@@ -25,6 +25,7 @@ log = structlog.get_logger(__name__)
 MAX_RETRIES = 2
 BUDGET_TOLERANCE = 0.10
 MIN_BUDGET_RATIO = 0.70
+PLAN_COUNT = 5
 
 _ACTIVITY_LABEL = {
     "bbq": "\u70e7\u70e4",
@@ -47,9 +48,11 @@ class PlannerState(TypedDict, total=False):
     enriched: list[dict]
     plan_a: dict
     plan_b: dict
+    plans: list[dict]
     over_budget: bool
     total_a: int
     total_b: int
+    totals: list[int]
 
 
 # ============================================================
@@ -113,15 +116,15 @@ async def node_validate(state: PlannerState) -> dict:
 
 
 # ============================================================
-# 4. generate_node\uff1a\u7528 LLM \u6839\u636e\u5019\u9009\u751f\u6210 plan_a / plan_b\uff08\u4e25\u683c JSON\uff09
+# 4. generate_node\uff1a\u7528 LLM \u6839\u636e\u5019\u9009\u751f\u6210\u591a\u4e2a\u65b9\u6848\uff08\u4e25\u683c JSON\uff09
 # ============================================================
 _GENERATE_SYSTEM = (
     "\u4f60\u662f\u4e00\u540d\u516c\u53f8\u56e2\u5efa\u7b56\u5212\u5e08\u3002\u8bf7\u6839\u636e\u7528\u6237\u4eba\u6570\u3001\u4eba\u5747\u9884\u7b97\u3001\u57ce\u5e02\u3001\u6d3b\u52a8\u7c7b\u578b\u4e0e\u5019\u9009\u573a\u5730\uff0c"
-    "\u751f\u6210\u4e24\u4e2a\u4e92\u65a5\u7684\u56e2\u5efa\u65b9\u6848\uff08A=\u4e3b\u9009\uff0cB=\u5907\u9009\uff09\u3002\n"
+    f"\u751f\u6210 {PLAN_COUNT} \u4e2a\u4e92\u65a5\u7684\u56e2\u5efa\u65b9\u6848\uff0c\u6bcf\u4e2a\u65b9\u6848\u7684\u573a\u5730\u3001\u4e3b\u9898\u6216\u6d3b\u52a8\u7ec4\u5408\u8981\u6709\u660e\u663e\u5dee\u5f02\u3002\n"
     "**\u4ec5\u8fd4\u56de \u4e25\u683c JSON\uff08\u4e0d\u8981 ```json \u5305\u88f9\u3001\u4e0d\u8981\u4efb\u4f55\u89e3\u91ca\uff09**\uff0c\u7ed3\u6784\u4e3a\uff1a\n"
-    '{"plan_a": <PLAN>, "plan_b": <PLAN>}\n'
+    '{"plans": [<PLAN>, <PLAN>, <PLAN>, <PLAN>, <PLAN>]}\n'
     "PLAN \u7ed3\u6784\uff1a\n"
-    '{"name":"\u7cbe\u9009\u65b9\u6848 A","description":"\u4e00\u53e5\u8bdd\u63cf\u8ff0",'
+    '{"name":"\u65b9\u6848\u540d\u79f0","description":"\u4e00\u53e5\u8bdd\u63cf\u8ff0",'
     '"schedule":[{"time":"09:00","activity":"...","location":"..."}],'
     '"venues":[{"name":"...","address":"...","phone":"...","rating":4.6,"map_url":""}],'
     '"budget":[{"item":"...","unit_price":80,"quantity":30,"total":2400}]}\n'
@@ -187,6 +190,124 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
     return float(match.group(0)) if match else default
 
 
+def _summarize_candidates(items: list[dict], limit: int) -> list[dict]:
+    summary: list[dict] = []
+    for item in items[:limit]:
+        summary.append(
+            {
+                "title": str(item.get("title") or "")[:80],
+                "content": str(item.get("content") or "")[:160],
+                "url": str(item.get("url") or ""),
+                "score": round(_coerce_float(item.get("score")), 3),
+            }
+        )
+    return summary
+
+
+def _recalculate_budget_line(line: dict, target_total: int) -> dict:
+    qty = max(_coerce_int(line.get("quantity"), 1), 1)
+    total = max(target_total, 0)
+    return {
+        **line,
+        "unit_price": max(round(total / qty), 0),
+        "quantity": qty,
+        "total": total,
+    }
+
+
+def _fit_plan_budget(plan: dict, *, cap: int, lower: int) -> dict:
+    budget = [b for b in plan.get("budget") or [] if isinstance(b, dict)]
+    total = sum(_coerce_int(b.get("total")) for b in budget)
+    if not budget:
+        plan["budget"] = []
+        plan["total"] = 0
+        return plan
+
+    if total > cap and cap > 0:
+        scale = cap / total
+        fitted: list[dict] = []
+        running = 0
+        for index, line in enumerate(budget):
+            if index == len(budget) - 1:
+                target = max(cap - running, 0)
+            else:
+                target = max(int(round(_coerce_int(line.get("total")) * scale)), 0)
+            fitted_line = _recalculate_budget_line(line, target)
+            fitted.append(fitted_line)
+            running += fitted_line["total"]
+        budget = fitted
+        total = sum(_coerce_int(b.get("total")) for b in budget)
+
+    if total < lower and lower <= cap:
+        budget.append(
+            {
+                "item": "机动预算",
+                "unit_price": lower - total,
+                "quantity": 1,
+                "total": lower - total,
+            }
+        )
+        total = lower
+
+    plan["budget"] = budget
+    plan["total"] = total
+    return plan
+
+
+def _fallback_plan(index: int, state: PlannerState) -> dict:
+    labels = ["轻量拓展", "文化体验", "协作挑战", "休闲团聚", "创意工作坊"]
+    label = labels[index % len(labels)]
+    return _fit_plan_budget(
+        {
+            "name": f"{label}方案 {chr(65 + index)}",
+            "description": f"面向 {state['participants']} 人的{label}团建备选。",
+            "schedule": [
+                {"time": "09:00", "activity": "团队集合与出发", "location": "公司指定集合点"},
+                {"time": "10:30", "activity": f"{label}主题活动", "location": state["city"]},
+                {"time": "12:30", "activity": "团队午餐", "location": "活动周边"},
+                {"time": "14:00", "activity": "分组协作与自由交流", "location": "活动场地"},
+                {"time": "17:00", "activity": "总结合影并返程", "location": "活动场地"},
+            ],
+            "venues": [
+                {
+                    "name": f"{state['city']}{label}场地",
+                    "address": f"{state['city']}市内或周边",
+                    "phone": "",
+                    "rating": 4.5,
+                    "map_url": "",
+                }
+            ],
+            "budget": [
+                {
+                    "item": "活动与餐饮",
+                    "unit_price": state["per_capita_budget"],
+                    "quantity": state["participants"],
+                    "total": state["participants"] * state["per_capita_budget"],
+                }
+            ],
+        },
+        cap=state["participants"] * state["per_capita_budget"],
+        lower=int(state["participants"] * state["per_capita_budget"] * MIN_BUDGET_RATIO),
+    )
+
+
+def _coerce_generated_plans(data: Any, state: PlannerState) -> list[dict]:
+    if not isinstance(data, dict):
+        data = {}
+    raw_plans = data.get("plans")
+    if not isinstance(raw_plans, list):
+        raw_plans = [data.get("plan_a"), data.get("plan_b")]
+    cap = state["participants"] * state["per_capita_budget"]
+    lower = int(cap * MIN_BUDGET_RATIO)
+    plans: list[dict] = []
+    for index, raw_plan in enumerate(raw_plans[:PLAN_COUNT]):
+        plan = _coerce_plan(raw_plan, f"\u65b9\u6848 {chr(65 + index)}")
+        plans.append(_fit_plan_budget(plan, cap=cap, lower=lower))
+    while len(plans) < PLAN_COUNT:
+        plans.append(_fallback_plan(len(plans), state))
+    return plans
+
+
 def _coerce_plan(p: Any, default_name: str) -> dict:
     if not isinstance(p, dict):
         p = {}
@@ -248,16 +369,27 @@ async def node_generate(state: PlannerState) -> dict:
     except json.JSONDecodeError:
         log.warning("event.generate.json_parse_failed", text_preview=text[:300])
         data = {}
-    plan_a = _coerce_plan(data.get("plan_a"), "\u7cbe\u9009\u65b9\u6848 A")
-    plan_b = _coerce_plan(data.get("plan_b"), "\u5907\u9009\u65b9\u6848 B")
-    return {"plan_a": plan_a, "plan_b": plan_b, "total_a": plan_a["total"], "total_b": plan_b["total"]}
+    plans = _coerce_generated_plans(data, state)
+    plan_a = plans[0]
+    plan_b = plans[1]
+    totals = [p["total"] for p in plans]
+    return {
+        "plans": plans,
+        "plan_a": plan_a,
+        "plan_b": plan_b,
+        "totals": totals,
+        "total_a": plan_a["total"],
+        "total_b": plan_b["total"],
+    }
 
 
 def _budget_issue(state: PlannerState) -> str:
     cap = state["participants"] * state["per_capita_budget"]
     lower = int(cap * MIN_BUDGET_RATIO)
     issues: list[str] = []
-    for label, total in (("A", state.get("total_a", 0)), ("B", state.get("total_b", 0))):
+    totals = state.get("totals") or [state.get("total_a", 0), state.get("total_b", 0)]
+    for index, total in enumerate(totals):
+        label = chr(65 + index)
         if total > cap:
             issues.append(f"\u65b9\u6848 {label} \u603b\u4ef7 {total} \u5143\u8d85\u8fc7\u9884\u7b97\u4e0a\u9650 {cap} \u5143")
         elif total < lower:
@@ -298,6 +430,7 @@ async def stream_event_planner(
             "id": 1,
             "status": "success",
             "message": f"\u5df2\u627e\u5230 {len(state.get('hits') or [])} \u4e2a\u7ed3\u679c",
+            "items": _summarize_candidates(state.get("hits") or [], 8),
         }
 
         # node 2: enrich + validate
@@ -318,33 +451,25 @@ async def stream_event_planner(
             "id": 2,
             "status": "success",
             "message": f"\u9884\u7b97\u6838\u9a8c\u901a\u8fc7\uff0c\u9009\u4e2d {len(state.get('enriched') or [])} \u4e2a\u5019\u9009",
+            "items": _summarize_candidates(state.get("enriched") or [], 6),
         }
         break
 
     # node 3: generate
-    budget_issue = ""
-    for attempt in range(MAX_RETRIES + 1):
-        yield "node", {"id": 3, "title": "\u751f\u6210\u884c\u7a0b\u65b9\u6848", "status": "loading", "message": "\u6b63\u5728\u751f\u6210 A/B \u65b9\u6848..."}
-        g_update = await node_generate(state)
-        state.update(g_update)
-        budget_issue = _budget_issue(state)
-        if not budget_issue:
-            break
-        if attempt >= MAX_RETRIES:
-            raise RuntimeError(f"\u751f\u6210\u65b9\u6848\u672a\u901a\u8fc7\u9884\u7b97\u6821\u9a8c\uff1a{budget_issue}")
-        state["feedback"] = (
-            f"{budget_issue}\uff1b\u8bf7\u91cd\u65b0\u751f\u6210 A/B \u65b9\u6848\uff0c\u6bcf\u4e2a\u65b9\u6848\u7684 budget \u5408\u8ba1"
-            f"\u5fc5\u987b\u4ecb\u4e8e {int(state['participants'] * state['per_capita_budget'] * MIN_BUDGET_RATIO)}"
-            f" \u5230 {state['participants'] * state['per_capita_budget']} \u5143\u4e4b\u95f4\u3002"
-        )
-        yield "node", {"id": 3, "status": "retry", "message": state["feedback"]}
+    yield "node", {"id": 3, "title": "\u751f\u6210\u884c\u7a0b\u65b9\u6848", "status": "loading", "message": f"\u6b63\u5728\u751f\u6210 {PLAN_COUNT} \u4e2a\u65b9\u6848..."}
+    g_update = await node_generate(state)
+    state.update(g_update)
+    budget_issue = _budget_issue(state)
+    if budget_issue:
+        raise RuntimeError(f"\u751f\u6210\u65b9\u6848\u672a\u901a\u8fc7\u9884\u7b97\u6821\u9a8c\uff1a{budget_issue}")
     yield "node", {
         "id": 3,
         "status": "success",
-        "message": f"\u65b9\u6848\u5df2\u751f\u6210\uff08A: \u00a5{state.get('total_a', 0)}\uff0cB: \u00a5{state.get('total_b', 0)}\uff09",
+        "message": f"\u5df2\u751f\u6210 {len(state.get('plans') or [])} \u4e2a\u65b9\u6848",
     }
 
     yield "plan", {
+        "plans": state.get("plans") or [],
         "plan_a": state.get("plan_a") or {},
         "plan_b": state.get("plan_b") or {},
     }
@@ -354,8 +479,7 @@ async def stream_event_planner(
         city=city,
         retries=state["retry_count"],
         elapsed_ms=elapsed_ms,
-        total_a=state.get("total_a"),
-        total_b=state.get("total_b"),
+        totals=state.get("totals"),
     )
     yield "done", {
         "elapsed_ms": elapsed_ms,
@@ -367,6 +491,7 @@ async def stream_event_planner(
             "activity_types": state["activity_types"],
             "retry_count": state["retry_count"],
             "feedback": state.get("feedback") or "",
+            "totals": state.get("totals") or [],
             "total_a": state.get("total_a", 0),
             "total_b": state.get("total_b", 0),
             "hits_count": len(state.get("hits") or []),
@@ -382,7 +507,7 @@ async def run_event_planner(
     city: str,
     activity_types: list[str],
 ) -> dict:
-    """\u540c\u6b65\u8fd0\u884c\uff1a\u8fd4\u56de {plan_a, plan_b, retries, final_state, elapsed_ms}\u3002"""
+    """\u540c\u6b65\u8fd0\u884c\uff1a\u8fd4\u56de {plans, plan_a, plan_b, retries, final_state, elapsed_ms}\u3002"""
     final: dict = {}
     async for ev, data in stream_event_planner(
         participants=participants,
@@ -391,6 +516,7 @@ async def run_event_planner(
         activity_types=activity_types,
     ):
         if ev == "plan":
+            final["plans"] = data.get("plans") or []
             final["plan_a"] = data["plan_a"]
             final["plan_b"] = data["plan_b"]
         elif ev == "done":

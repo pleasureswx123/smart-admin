@@ -58,12 +58,22 @@ const ICON_MAP: Record<string, React.ElementType> = {
   party: PartyPopper,
 }
 
+const SHOW_AGENT_DETAILS = false
+
 interface AgentNode {
   id: number
   title: string
   description: string
-  status: "pending" | "loading" | "success" | "retry"
+  status: "pending" | "loading" | "success" | "retry" | "error"
   message?: string
+  details?: AgentNodeDetail[]
+}
+
+interface AgentNodeDetail {
+  title: string
+  content?: string
+  url?: string
+  score?: number
 }
 
 const initialNodes: AgentNode[] = [
@@ -72,6 +82,30 @@ const initialNodes: AgentNode[] = [
   { id: 3, title: "生成行程方案", description: "整合信息生成完整方案...", status: "pending" },
 ]
 
+function planTabLabel(index: number) {
+  if (index === 0) return "精选方案 A"
+  if (index === 1) return "备选方案 B"
+  return `方案 ${String.fromCharCode(65 + index)}`
+}
+
+function normalizeNodeDetails(items: unknown): AgentNodeDetail[] | undefined {
+  if (!Array.isArray(items)) return undefined
+  const details = items
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
+    .map((item) => ({
+      title: String(item.title || "未命名候选"),
+      content: item.content ? String(item.content) : undefined,
+      url: item.url ? String(item.url) : undefined,
+      score: typeof item.score === "number" ? item.score : undefined,
+    }))
+  return details.length ? details : undefined
+}
+
+function normalizePlanOptions(data: any): PlanDetail[] {
+  const options = Array.isArray(data?.plans) ? data.plans : [data?.plan_a, data?.plan_b]
+  return options.filter((item: unknown): item is PlanDetail => !!item && typeof item === "object")
+}
+
 export default function EventPage() {
   const [participants, setParticipants] = React.useState([30])
   const [budget, setBudget] = React.useState("")
@@ -79,10 +113,9 @@ export default function EventPage() {
   const [selectedTypes, setSelectedTypes] = React.useState<string[]>([])
   const [isGenerating, setIsGenerating] = React.useState(false)
   const [nodes, setNodes] = React.useState<AgentNode[]>(initialNodes)
-  const [planA, setPlanA] = React.useState<PlanDetail | null>(null)
-  const [planB, setPlanB] = React.useState<PlanDetail | null>(null)
+  const [plans, setPlans] = React.useState<PlanDetail[]>([])
   const [planId, setPlanId] = React.useState<string | null>(null)
-  const [activePlan, setActivePlan] = React.useState("a")
+  const [activePlan, setActivePlan] = React.useState("0")
   const [cityOptions, setCityOptions] = React.useState<CityItem[]>([])
   const [activityOptions, setActivityOptions] = React.useState<ActivityTypeItem[]>([])
   const [exporting, setExporting] = React.useState(false)
@@ -126,15 +159,15 @@ export default function EventPage() {
     setIsGenerating(true)
     setGenerateError(null)
     setElapsedMs(null)
-    setPlanA(null)
-    setPlanB(null)
+    setPlans([])
     setPlanId(null)
+    setActivePlan("0")
     // 立即将 node 1 设为 loading，给用户即时视觉反馈
     setNodes(
       initialNodes.map((n) =>
         n.id === 1
           ? { ...n, status: "loading" as const, message: "正在连接 AI 服务..." }
-          : { ...n, status: "pending" as const, message: undefined }
+          : { ...n, status: "pending" as const, message: undefined, details: undefined }
       )
     )
 
@@ -153,32 +186,55 @@ export default function EventPage() {
       )
       for await (const ev of stream) {
         if (ev.event === "node") {
-          // 严格对应后端 node 事件：id/status/message/title
-          const { id, status, message, title } = ev.data || {}
+          // 严格对应后端 node 事件：id/status/message/title/items
+          const { id, status, message, title, items } = ev.data || {}
+          const details = normalizeNodeDetails(items)
           setNodes((prev) =>
             prev.map((n) =>
               n.id === id
-                ? { ...n, status: status as AgentNode["status"], message, title: title || n.title }
+                ? {
+                    ...n,
+                    status: status as AgentNode["status"],
+                    message,
+                    title: title || n.title,
+                    details: status === "loading" ? undefined : details,
+                  }
                 : n
             )
           )
         } else if (ev.event === "plan") {
-          // plan 事件：plan_a / plan_b / plan_id
-          setPlanA(ev.data?.plan_a as PlanDetail)
-          setPlanB(ev.data?.plan_b as PlanDetail)
+          // plan 事件：plans / plan_a / plan_b / plan_id
+          setPlans(normalizePlanOptions(ev.data))
+          setActivePlan("0")
           if (ev.data?.plan_id) setPlanId(ev.data.plan_id)
         } else if (ev.event === "done") {
           // done 事件：elapsed_ms / retries
           if (ev.data?.elapsed_ms) setElapsedMs(ev.data.elapsed_ms)
         } else if (ev.event === "error") {
           // error 事件：替代 alert，用内联错误展示
-          setGenerateError(ev.data?.message || "生成失败，请重试")
+          const message = ev.data?.message || "生成失败，请重试"
+          setGenerateError(message)
+          setNodes((prev) =>
+            prev.map((n) =>
+              n.status === "loading" || n.id === 3
+                ? { ...n, status: "error" as const, message, details: undefined }
+                : n
+            )
+          )
         }
         // meta 事件（session_id/run_id）忽略，无需处理
       }
     } catch (e: any) {
       if (e?.name !== "AbortError") {
-        setGenerateError(e?.message || "请求失败，请检查网络和后端服务")
+        const message = e?.message || "请求失败，请检查网络和后端服务"
+        setGenerateError(message)
+        setNodes((prev) =>
+          prev.map((n) =>
+            n.status === "loading" || n.id === 3
+              ? { ...n, status: "error" as const, message, details: undefined }
+              : n
+          )
+        )
       }
     } finally {
       setIsGenerating(false)
@@ -199,19 +255,20 @@ export default function EventPage() {
     }
   }
 
-  const showPlan = !!planA && !!planB
-  const currentPlan = activePlan === "a" ? planA : planB
+  const activePlanIndex = Number(activePlan)
+  const currentPlan = plans[Number.isFinite(activePlanIndex) ? activePlanIndex : 0]
+  const showPlan = plans.length > 0 && !!currentPlan
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] overflow-hidden">
+    <div className="flex h-[calc(100vh-3.5rem)] min-h-0 min-w-0 overflow-hidden">
       {/* 左：需求配置 */}
-      <div className="w-[320px] flex-shrink-0 border-r">
-        <div className="flex h-full flex-col">
+      <div className="min-h-0 w-[320px] flex-shrink-0 border-r">
+        <div className="flex h-full min-h-0 flex-col">
           <div className="border-b p-4">
             <h1 className="text-lg font-semibold">团建策划师</h1>
             <p className="text-sm text-muted-foreground">AI 智能生成团建方案</p>
           </div>
-          <ScrollArea className="flex-1">
+          <ScrollArea className="min-h-0 flex-1">
             <div className="space-y-5 p-4">
 
               {/* 选项加载中/加载失败状态 */}
@@ -376,13 +433,13 @@ export default function EventPage() {
       </div>
 
       {/* 中：Agent 节点流 */}
-      <div className="w-[320px] flex-shrink-0 border-r bg-muted/30">
-        <div className="flex h-full flex-col">
+      <div className="min-h-0 w-[320px] flex-shrink-0 border-r bg-muted/30">
+        <div className="flex h-full min-h-0 flex-col">
           <div className="border-b p-4">
             <h2 className="text-sm font-semibold">Agent 执行状态</h2>
             <p className="text-xs text-muted-foreground">LangGraph 工作流程</p>
           </div>
-          <ScrollArea className="flex-1">
+          <ScrollArea className="min-h-0 flex-1">
             <div className="p-4">
               <div className="relative space-y-0">
                 {nodes.map((node, index) => (
@@ -402,7 +459,8 @@ export default function EventPage() {
                           node.status === "pending" && "border-muted-foreground/30",
                           node.status === "loading" && "border-primary",
                           node.status === "success" && "border-primary bg-primary",
-                          node.status === "retry" && "border-orange-500"
+                          node.status === "retry" && "border-orange-500",
+                          node.status === "error" && "border-destructive bg-destructive"
                         )}
                       >
                         {node.status === "pending" && (
@@ -411,6 +469,7 @@ export default function EventPage() {
                         {node.status === "loading" && <Loader2 className="size-4 animate-spin text-primary" />}
                         {node.status === "success" && <Check className="size-4 text-primary-foreground" />}
                         {node.status === "retry" && <RefreshCw className="size-4 animate-spin text-orange-500" />}
+                        {node.status === "error" && <AlertCircle className="size-4 text-destructive-foreground" />}
                       </div>
                       <div className="flex-1 pt-1">
                         <div className="text-sm font-medium">{node.title}</div>
@@ -421,11 +480,53 @@ export default function EventPage() {
                               ? "text-orange-500"
                               : node.status === "success"
                                 ? "text-primary"
+                                : node.status === "error"
+                                  ? "text-destructive"
                                 : "text-muted-foreground"
                           )}
                         >
                           {node.message || node.description}
                         </div>
+                        {SHOW_AGENT_DETAILS && node.details?.length ? (
+                          <div className="mt-2 space-y-1.5">
+                            {node.details.map((detail, detailIndex) => (
+                              <div
+                                key={`${node.id}-${detailIndex}-${detail.title}`}
+                                className="rounded-md border bg-background px-2 py-1.5 shadow-xs"
+                              >
+                                <div
+                                  className="truncate text-[11px] font-medium text-foreground"
+                                  title={detail.title}
+                                >
+                                  {detailIndex + 1}. {detail.title}
+                                </div>
+                                {detail.content && (
+                                  <div className="mt-0.5 max-h-8 overflow-hidden text-[11px] leading-4 text-muted-foreground">
+                                    {detail.content}
+                                  </div>
+                                )}
+                                {(detail.score !== undefined || detail.url) && (
+                                  <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                                    {detail.score !== undefined && (
+                                      <span>匹配度 {Math.round(detail.score * 100)}%</span>
+                                    )}
+                                    {detail.url && (
+                                      <a
+                                        href={detail.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex min-w-0 items-center gap-1 text-primary hover:underline"
+                                      >
+                                        <ExternalLink className="size-3 flex-shrink-0" />
+                                        <span className="truncate">来源</span>
+                                      </a>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -437,11 +538,10 @@ export default function EventPage() {
       </div>
 
       {/* 右：方案展示 */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {showPlan && currentPlan ? (
           <PlanView
-            planA={planA!}
-            planB={planB!}
+            plans={plans}
             currentPlan={currentPlan}
             participants={participants[0]}
             activePlan={activePlan}
@@ -451,7 +551,7 @@ export default function EventPage() {
             canExport={!!planId}
           />
         ) : (
-          <div className="flex flex-1 items-center justify-center">
+          <div className="flex min-h-0 flex-1 items-center justify-center">
             <div className="text-center text-muted-foreground">
               <PartyPopper className="mx-auto mb-4 size-12 opacity-30" />
               <p>配置活动需求后</p>
@@ -465,8 +565,7 @@ export default function EventPage() {
 }
 
 function PlanView(props: {
-  planA: PlanDetail
-  planB: PlanDetail
+  plans: PlanDetail[]
   currentPlan: PlanDetail
   participants: number
   activePlan: string
@@ -475,23 +574,28 @@ function PlanView(props: {
   exporting: boolean
   canExport: boolean
 }) {
-  const { currentPlan, participants, activePlan, onTabChange, onExport, exporting, canExport } = props
+  const { plans, currentPlan, participants, activePlan, onTabChange, onExport, exporting, canExport } = props
   const total = currentPlan.total || currentPlan.budget.reduce((s, b) => s + b.total, 0)
   return (
     <>
-      <div className="flex items-center justify-between border-b p-4">
-        <Tabs value={activePlan} onValueChange={onTabChange}>
-          <TabsList>
-            <TabsTrigger value="a">精选方案 A</TabsTrigger>
-            <TabsTrigger value="b">备选方案 B</TabsTrigger>
-          </TabsList>
+      <div className="flex min-w-0 items-center justify-between gap-3 border-b p-4">
+        <Tabs value={activePlan} onValueChange={onTabChange} className="min-w-0 flex-1">
+          <div className="overflow-x-auto">
+            <TabsList className="inline-flex w-max">
+              {plans.map((_, index) => (
+                <TabsTrigger key={index} value={String(index)}>
+                  {planTabLabel(index)}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </div>
         </Tabs>
-        <Button size="sm" variant="outline" disabled={!canExport || exporting} onClick={onExport}>
+        <Button size="sm" variant="outline" disabled={!canExport || exporting} onClick={onExport} className="flex-shrink-0">
           {exporting ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Download className="mr-2 size-4" />}
           导出 PDF
         </Button>
       </div>
-      <ScrollArea className="flex-1">
+      <ScrollArea className="min-h-0 flex-1">
         <div className="p-6">
           <div className="mb-6">
             <h2 className="text-xl font-semibold">{currentPlan.name}</h2>

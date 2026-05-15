@@ -54,6 +54,7 @@ async def stream_generate_plan(
     started = time.perf_counter()
     plan_a: dict = {}
     plan_b: dict = {}
+    plans: list[dict] = []
     final_state: dict = {}
     retries = 0
     success = False
@@ -70,6 +71,7 @@ async def stream_generate_plan(
             if ev == "plan":
                 plan_a = data["plan_a"]
                 plan_b = data["plan_b"]
+                plans = data.get("plans") or [plan_a, plan_b]
                 # \u843d\u5e93\u540e\u4e0b\u53d1 plan_id
                 plan = await event_repo.create_plan(
                     session,
@@ -79,6 +81,7 @@ async def stream_generate_plan(
                     activity_types=activity_types,
                     plan_a=plan_a,
                     plan_b=plan_b,
+                    plans=plans,
                 )
                 await session.commit()
                 yield "plan", {**data, "plan_id": str(plan.id)}
@@ -210,9 +213,10 @@ async def export_plan_pdf(*, plan: EventPlan) -> ExportPdfResponse:
     export_dir = Path(settings.EVENT_EXPORT_DIR)
     export_dir.mkdir(parents=True, exist_ok=True)
 
-    plans_html = (
-        _render_plan_section("\u4e3b\u9009\u65b9\u6848 A", plan.plan_a or {})
-        + _render_plan_section("\u5907\u9009\u65b9\u6848 B", plan.plan_b or {})
+    source_plans = plan.plans or [plan.plan_a or {}, plan.plan_b or {}]
+    plans_html = "".join(
+        _render_plan_section(f"\u65b9\u6848 {chr(65 + index)}", item)
+        for index, item in enumerate(source_plans)
     )
     cap = plan.participants * plan.per_capita_budget
     types = html.escape(" / ".join(plan.activity_types or []))

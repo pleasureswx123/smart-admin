@@ -10,7 +10,7 @@ from sqlmodel import Field, SQLModel
 
 
 class EventPlan(SQLModel, table=True):
-    """\u56e2\u5efa\u65b9\u6848\uff08\u542b\u4e3b/\u5907\u9009 2 \u4e2a\u65b9\u6848\u7684\u5b8c\u6574 JSON\uff09\u3002"""
+    """\u56e2\u5efa\u65b9\u6848\uff08\u4fdd\u7559\u4e3b/\u5907\u9009\u5b57\u6bb5\uff0c\u540c\u65f6\u7528 plans \u5b58\u50a8\u5b8c\u6574\u65b9\u6848\u5217\u8868\uff09\u3002"""
 
     __tablename__ = "event_plan"
 
@@ -30,6 +30,10 @@ class EventPlan(SQLModel, table=True):
     plan_b: dict = Field(
         default_factory=dict,
         sa_column=Column(JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    )
+    plans: list[dict] = Field(
+        default_factory=list,
+        sa_column=Column(JSONB, nullable=False, server_default=text("'[]'::jsonb")),
     )
     created_at: datetime = Field(
         sa_column=Column(
