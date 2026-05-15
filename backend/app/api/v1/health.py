@@ -49,11 +49,14 @@ async def health_ark() -> dict[str, Any]:
         "embedding_model": settings.ARK_EMBEDDING_MODEL,
         "configured_embedding_dim": settings.ARK_EMBEDDING_DIM,
     }
+    chat_ok = False
+    embedding_ok = False
 
     try:
         chat = get_chat_model()
         reply = await chat.ainvoke("用一句话自我介绍")
         result["chat_reply"] = reply.content
+        chat_ok = True
     except Exception as exc:  # noqa: BLE001
         log.warning("health.ark.chat_failed", error=str(exc))
         result["chat_error"] = f"{exc.__class__.__name__}: {exc}"
@@ -63,8 +66,10 @@ async def health_ark() -> dict[str, Any]:
         vec = await emb.aembed_query("smart-admin connectivity test")
         result["embedding_dim"] = len(vec)
         result["embedding_dim_match"] = len(vec) == settings.ARK_EMBEDDING_DIM
+        embedding_ok = bool(result["embedding_dim_match"])
     except Exception as exc:  # noqa: BLE001
         log.warning("health.ark.embed_failed", error=str(exc))
         result["embedding_error"] = f"{exc.__class__.__name__}: {exc}"
 
+    result["ok"] = chat_ok and embedding_ok
     return result
