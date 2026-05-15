@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -146,34 +147,42 @@ _PDF_HTML = """<html>
 
 
 def _render_plan_section(title: str, plan: dict) -> str:
-    name = plan.get("name", "")
-    desc = plan.get("description", "")
+    name = html.escape(str(plan.get("name", "")))
+    desc = html.escape(str(plan.get("description", "")))
     schedule = plan.get("schedule") or []
     venues = plan.get("venues") or []
     budget = plan.get("budget") or []
     total = int(plan.get("total") or 0)
 
     sched_rows = "".join(
-        f"<tr><td>{s.get('time','')}</td><td>{s.get('activity','')}</td>"
-        f"<td>{s.get('location','')}</td></tr>"
+        f"<tr><td>{html.escape(str(s.get('time','')))}</td>"
+        f"<td>{html.escape(str(s.get('activity','')))}</td>"
+        f"<td>{html.escape(str(s.get('location','')))}</td></tr>"
         for s in schedule
+        if isinstance(s, dict)
     )
     venue_rows = "".join(
-        f"<tr><td>{v.get('name','')}</td><td>{v.get('address','')}</td>"
-        f"<td>{v.get('phone','')}</td><td class='right'>{v.get('rating',0)}</td></tr>"
+        f"<tr><td>{html.escape(str(v.get('name','')))}</td>"
+        f"<td>{html.escape(str(v.get('address','')))}</td>"
+        f"<td>{html.escape(str(v.get('phone','')))}</td>"
+        f"<td class='right'>{html.escape(str(v.get('rating',0)))}</td></tr>"
         for v in venues
+        if isinstance(v, dict)
     )
     budget_rows = "".join(
-        f"<tr><td>{b.get('item','')}</td><td class='right'>{b.get('unit_price',0)}</td>"
-        f"<td class='right'>{b.get('quantity',0)}</td><td class='right'>{b.get('total',0)}</td></tr>"
+        f"<tr><td>{html.escape(str(b.get('item','')))}</td>"
+        f"<td class='right'>{html.escape(str(b.get('unit_price',0)))}</td>"
+        f"<td class='right'>{html.escape(str(b.get('quantity',0)))}</td>"
+        f"<td class='right'>{html.escape(str(b.get('total',0)))}</td></tr>"
         for b in budget
+        if isinstance(b, dict)
     )
     total_row = (
         f"<tr class='total-row'><td colspan='3' class='right'>\u5408\u8ba1</td>"
         f"<td class='right'>{total}</td></tr>"
     )
     return (
-        f"<h2>{title}\uff1a{name}</h2>"
+        f"<h2>{html.escape(title)}\uff1a{name}</h2>"
         f"<p>{desc}</p>"
         f"<h3>\u884c\u7a0b\u5b89\u6392</h3>"
         f"<table><thead><tr><th>\u65f6\u95f4</th><th>\u6d3b\u52a8</th><th>\u5730\u70b9</th></tr></thead>"
@@ -206,9 +215,9 @@ async def export_plan_pdf(*, plan: EventPlan) -> ExportPdfResponse:
         + _render_plan_section("\u5907\u9009\u65b9\u6848 B", plan.plan_b or {})
     )
     cap = plan.participants * plan.per_capita_budget
-    types = " / ".join(plan.activity_types or [])
-    html = _PDF_HTML.format(
-        city=plan.city,
+    types = html.escape(" / ".join(plan.activity_types or []))
+    rendered_html = _PDF_HTML.format(
+        city=html.escape(plan.city),
         participants=plan.participants,
         per_capita_budget=plan.per_capita_budget,
         cap=cap,
@@ -218,7 +227,7 @@ async def export_plan_pdf(*, plan: EventPlan) -> ExportPdfResponse:
     )
     file_name = f"{plan.id.hex}.pdf"
     target = export_dir / file_name
-    size = await asyncio.to_thread(_render_pdf_sync, html, target)
+    size = await asyncio.to_thread(_render_pdf_sync, rendered_html, target)
     download_url = f"/api/v1/event/exports/{file_name}"
     log.info("event.export_pdf", plan_id=str(plan.id), file_path=str(target), size=size)
     return ExportPdfResponse(

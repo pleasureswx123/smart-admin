@@ -24,6 +24,7 @@ log = structlog.get_logger(__name__)
 
 MAX_RETRIES = 2
 BUDGET_TOLERANCE = 0.10
+MIN_BUDGET_RATIO = 0.70
 
 _ACTIVITY_LABEL = {
     "bbq": "\u70e7\u70e4",
@@ -55,10 +56,16 @@ class PlannerState(TypedDict, total=False):
 # 1. search_node
 # ============================================================
 async def node_search(state: PlannerState) -> dict:
+    purpose = "\u573a\u5730/\u9910\u5385\u63a8\u8350"
+    if state.get("retry_count", 0) > 0:
+        purpose = (
+            "\u4f4e\u9884\u7b97 \u56e2\u5efa \u573a\u5730 \u9910\u5385 \u516c\u56ed \u684c\u6e38 \u81ea\u52a9\u9910 \u63a8\u8350 "
+            + (state.get("feedback") or "")
+        )
     hits = await tavily_search(
         city=state["city"],
         activity_types=state["activity_types"],
-        purpose="\u573a\u5730/\u9910\u5385\u63a8\u8350",
+        purpose=purpose,
         max_results=8,
     )
     payload: list[dict] = [
@@ -129,12 +136,17 @@ def _build_generate_user(state: PlannerState) -> str:
     cands = "\n".join(
         f"- {h.get('title', '')[:60]} | {h.get('content', '')[:100]}" for h in enriched[:6]
     ) or "(\u672a\u68c0\u7d22\u5230\u8054\u7f51\u5019\u9009\uff0c\u8bf7\u6839\u636e\u57ce\u5e02\u4e0e\u6d3b\u52a8\u7c7b\u578b\u865a\u62df\u5408\u7406\u573a\u5730)"
+    cap = state["participants"] * state["per_capita_budget"]
+    lower = int(cap * MIN_BUDGET_RATIO)
+    feedback = state.get("feedback") or "\u65e0"
     return (
         f"\u57ce\u5e02\uff1a{state['city']}\n"
         f"\u4eba\u6570\uff1a{state['participants']}\n"
         f"\u4eba\u5747\u9884\u7b97\uff1a{state['per_capita_budget']} \u5143\n"
-        f"\u603b\u9884\u7b97\u4e0a\u9650\uff1a{state['participants'] * state['per_capita_budget']} \u5143\n"
+        f"\u603b\u9884\u7b97\u4e0a\u9650\uff1a{cap} \u5143\n"
+        f"\u5efa\u8bae\u9884\u7b97\u533a\u95f4\uff1a{lower} \u5230 {cap} \u5143\n"
         f"\u6d3b\u52a8\u7c7b\u578b\uff1a{types}\n"
+        f"\u4e0a\u4e00\u8f6e\u8c03\u6574\u8981\u6c42\uff1a{feedback}\n"
         f"\u5019\u9009\u573a\u5730/\u9910\u5385\uff1a\n{cands}"
     )
 
@@ -144,6 +156,35 @@ _JSON_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
 def _strip_fence(text: str) -> str:
     return _JSON_FENCE.sub("", text).strip()
+
+
+_NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+def _coerce_int(value: Any, default: int = 0) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    text = str(value).replace(",", "")
+    match = _NUMBER_RE.search(text)
+    return int(float(match.group(0))) if match else default
+
+
+def _coerce_float(value: Any, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).replace(",", "")
+    match = _NUMBER_RE.search(text)
+    return float(match.group(0)) if match else default
 
 
 def _coerce_plan(p: Any, default_name: str) -> dict:
@@ -165,7 +206,7 @@ def _coerce_plan(p: Any, default_name: str) -> dict:
             "name": str(v.get("name") or ""),
             "address": str(v.get("address") or ""),
             "phone": str(v.get("phone") or ""),
-            "rating": float(v.get("rating") or 0),
+            "rating": _coerce_float(v.get("rating")),
             "map_url": str(v.get("map_url") or v.get("mapUrl") or ""),
         }
         for v in venues if isinstance(v, dict)
@@ -175,9 +216,9 @@ def _coerce_plan(p: Any, default_name: str) -> dict:
     for b in budget:
         if not isinstance(b, dict):
             continue
-        unit = int(b.get("unit_price") or b.get("unitPrice") or 0)
-        qty = int(b.get("quantity") or 0)
-        line = int(b.get("total") or unit * qty)
+        unit = _coerce_int(b.get("unit_price") or b.get("unitPrice"))
+        qty = _coerce_int(b.get("quantity"))
+        line = _coerce_int(b.get("total"), unit * qty)
         total += line
         norm_budget.append(
             {"item": str(b.get("item") or ""), "unit_price": unit, "quantity": qty, "total": line}
@@ -210,6 +251,18 @@ async def node_generate(state: PlannerState) -> dict:
     plan_a = _coerce_plan(data.get("plan_a"), "\u7cbe\u9009\u65b9\u6848 A")
     plan_b = _coerce_plan(data.get("plan_b"), "\u5907\u9009\u65b9\u6848 B")
     return {"plan_a": plan_a, "plan_b": plan_b, "total_a": plan_a["total"], "total_b": plan_b["total"]}
+
+
+def _budget_issue(state: PlannerState) -> str:
+    cap = state["participants"] * state["per_capita_budget"]
+    lower = int(cap * MIN_BUDGET_RATIO)
+    issues: list[str] = []
+    for label, total in (("A", state.get("total_a", 0)), ("B", state.get("total_b", 0))):
+        if total > cap:
+            issues.append(f"\u65b9\u6848 {label} \u603b\u4ef7 {total} \u5143\u8d85\u8fc7\u9884\u7b97\u4e0a\u9650 {cap} \u5143")
+        elif total < lower:
+            issues.append(f"\u65b9\u6848 {label} \u603b\u4ef7 {total} \u5143\u4f4e\u4e8e\u5efa\u8bae\u4e0b\u9650 {lower} \u5143")
+    return "\uff1b".join(issues)
 
 
 # ============================================================
@@ -269,9 +322,22 @@ async def stream_event_planner(
         break
 
     # node 3: generate
-    yield "node", {"id": 3, "title": "\u751f\u6210\u884c\u7a0b\u65b9\u6848", "status": "loading", "message": "\u6b63\u5728\u751f\u6210 A/B \u65b9\u6848..."}
-    g_update = await node_generate(state)
-    state.update(g_update)
+    budget_issue = ""
+    for attempt in range(MAX_RETRIES + 1):
+        yield "node", {"id": 3, "title": "\u751f\u6210\u884c\u7a0b\u65b9\u6848", "status": "loading", "message": "\u6b63\u5728\u751f\u6210 A/B \u65b9\u6848..."}
+        g_update = await node_generate(state)
+        state.update(g_update)
+        budget_issue = _budget_issue(state)
+        if not budget_issue:
+            break
+        if attempt >= MAX_RETRIES:
+            raise RuntimeError(f"\u751f\u6210\u65b9\u6848\u672a\u901a\u8fc7\u9884\u7b97\u6821\u9a8c\uff1a{budget_issue}")
+        state["feedback"] = (
+            f"{budget_issue}\uff1b\u8bf7\u91cd\u65b0\u751f\u6210 A/B \u65b9\u6848\uff0c\u6bcf\u4e2a\u65b9\u6848\u7684 budget \u5408\u8ba1"
+            f"\u5fc5\u987b\u4ecb\u4e8e {int(state['participants'] * state['per_capita_budget'] * MIN_BUDGET_RATIO)}"
+            f" \u5230 {state['participants'] * state['per_capita_budget']} \u5143\u4e4b\u95f4\u3002"
+        )
+        yield "node", {"id": 3, "status": "retry", "message": state["feedback"]}
     yield "node", {
         "id": 3,
         "status": "success",

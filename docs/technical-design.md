@@ -189,7 +189,6 @@ backend/
     │   │   └── event_planner.py  # 搜索→评估→重搜（条件边）→生成
     │   ├── tools/                # Agent 工具
     │   │   ├── tavily_search.py
-    │   │   ├── budget_calc.py
     │   │   ├── volc_ocr.py       # 火山视觉 OCR（名片/身份证）
     │   │   └── dingtalk.py       # 钉钉到访推送
     │   └── loaders/
@@ -311,7 +310,7 @@ data/
 
 **关键设计：**
 - **节点事件流：** 通过 SSE `event: node` 推送当前节点状态（`pending / loading / success / retry`），前端 `event/page.tsx` 已实现节点状态可视化。
-- **预算校验：** `budget_calc` 工具接收 `participants × per_capita_budget` 作为上限，误差 ≤10% 视为通过。
+- **预算校验：** 生成后校验 A/B 方案预算，要求总价位于 `participants × per_capita_budget` 的 70%~100% 区间，不通过则带反馈重试。
 - **方案双选：** `generate_node` 输出 2 个互斥方案（如 A=户外、B=室内），命中前端 Tabs。
 - **运行记录：** 每次生成保存到 `EventRun`（含完整状态 JSON），用于失败回放和 Prompt 调优。
 
