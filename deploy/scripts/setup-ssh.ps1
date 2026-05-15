@@ -7,8 +7,8 @@
 #   （执行过程中会要求输入一次服务器 root 密码）
 #
 # 用法 B（自动化，传入密码，便于 CI/无人值守）：
-#   pwsh ./deploy/scripts/setup-ssh.ps1 -Password 'lbt@123.com'
-#   （密码以明文参数形式传入，仅适合内网环境）
+#   pwsh ./deploy/scripts/setup-ssh.ps1 -Password '<server-root-password>'
+#   （密码以明文参数形式传入，仅适合临时内网操作；更推荐交互式输入）
 # =============================================================================
 
 param(

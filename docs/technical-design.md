@@ -368,16 +368,16 @@ from langchain_openai import OpenAIEmbeddings
 
 def get_embeddings():
     return OpenAIEmbeddings(
-        model=settings.ARK_EMBEDDING_MODEL,             # e.g. "doubao-embedding-text-240715"
+        model=settings.ARK_EMBEDDING_MODEL,             # e.g. "doubao-embedding-vision-251215"
         api_key=settings.ARK_API_KEY,
         base_url=settings.ARK_BASE_URL,
-        dimensions=settings.ARK_EMBEDDING_DIM,          # 默认 2560，pgvector 表 dim 需对齐
+        dimensions=settings.ARK_EMBEDDING_DIM,          # 默认 2048，pgvector 表 dim 需对齐
     )
 ```
 
 > **模型选型建议：**
 > - Chat：`doubao-1.5-pro-32k` 或 `doubao-1.5-pro-256k`（长文档场景）
-> - Embedding：`doubao-embedding-text-240715`（dim=2560）
+> - Embedding：`doubao-embedding-vision-251215`（dim=2048）
 > - 视觉：`doubao-1.5-vision-pro-32k`（OCR 多模态推理）
 >
 > 具体模型代号以你在火山控制台开通的为准。
@@ -882,9 +882,9 @@ REDIS_URL=redis://redis:6379/0
 ARK_API_KEY=replace-with-real-key
 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 ARK_CHAT_MODEL=doubao-1.5-pro-32k
-ARK_VISION_MODEL=doubao-1.5-vision-pro-32k
-ARK_EMBEDDING_MODEL=doubao-embedding-text-240715
-ARK_EMBEDDING_DIM=2560
+ARK_VISION_MODEL=doubao-seed-1-6-flash-250828
+ARK_EMBEDDING_MODEL=doubao-embedding-vision-251215
+ARK_EMBEDDING_DIM=2048
 
 # ===== Tavily =====
 TAVILY_API_KEY=replace-with-real-key

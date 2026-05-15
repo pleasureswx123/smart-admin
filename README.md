@@ -84,8 +84,8 @@ npm run dev
 |------|------|
 | `DATABASE_URL` | `postgresql+asyncpg://smartadmin:smartadmin-dev@localhost:5434/smartadmin` |
 | `REDIS_URL` | `redis://localhost:6381/0` |
-| `ARK_API_KEY` | 火山方舟 API Key（已配） |
-| `TAVILY_API_KEY` | Tavily 搜索 Key（团建模块用） |
+| `ARK_API_KEY` | 火山方舟 API Key（填在本地未跟踪的 `.env` / `deploy/server.env`） |
+| `TAVILY_API_KEY` | Tavily 搜索 Key（团建模块用，填在本地未跟踪的 `.env` / `deploy/server.env`） |
 | `DINGTALK_WEBHOOK_URL` / `DINGTALK_SECRET` | 钉钉群通知（选填，访客模块） |
 
 ---
@@ -96,7 +96,7 @@ npm run dev
 |------|-----|
 | **服务器 IP** | `192.168.10.130` |
 | **系统** | Ubuntu 24.04.4 LTS |
-| **登录** | `ssh root@192.168.10.130` / 密码 `lbt@123.com` |
+| **登录** | `ssh root@192.168.10.130` / 密码请从安全渠道获取 |
 | **部署目录** | `/opt/smart-admin` |
 | **对外访问** | http://192.168.10.130:8081 |
 
@@ -242,7 +242,7 @@ flowchart TD
 pwsh ./deploy/scripts/setup-ssh.ps1
 ```
 
-执行过程中会要求 **输入一次** 服务器 root 密码（`lbt@123.com`），完成后所有部署/运维脚本均无需密码。
+执行过程中会要求 **输入一次** 服务器 root 密码（请从安全渠道获取），完成后所有部署/运维脚本均无需密码。
 
 > **Git Bash 用户也可以直接执行：** `ssh-copy-id root@192.168.10.130`
 

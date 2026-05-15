@@ -38,8 +38,8 @@ class Settings(BaseSettings):
     ARK_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/v3"
     ARK_CHAT_MODEL: str = "doubao-1.5-pro-32k"
     ARK_VISION_MODEL: str = "doubao-seed-1-6-flash-250828"
-    ARK_EMBEDDING_MODEL: str = "doubao-embedding-text-240715"
-    ARK_EMBEDDING_DIM: int = 2560
+    ARK_EMBEDDING_MODEL: str = "doubao-embedding-vision-251215"
+    ARK_EMBEDDING_DIM: int = 2048
     # LLM 调用超时（秒）：团建方案/公文生成需生成大量 JSON/文本，建议 ≥120
     ARK_TIMEOUT: int = 120
 
