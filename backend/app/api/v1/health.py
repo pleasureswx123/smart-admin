@@ -4,6 +4,7 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.ai.ark import get_chat_model, get_embeddings
@@ -15,8 +16,8 @@ log = structlog.get_logger(__name__)
 
 
 @router.get("/health")
-async def health(session: SessionDep, redis: RedisDep) -> dict[str, str]:
-    """探活：检查 DB / Redis / 火山配置是否就绪。"""
+async def health(session: SessionDep, redis: RedisDep) -> JSONResponse:
+    """探活：DB / Redis 失败时返回 503，供 Docker healthcheck 正确判定。"""
     db_status = "ok"
     try:
         await session.execute(text("SELECT 1"))
@@ -34,8 +35,10 @@ async def health(session: SessionDep, redis: RedisDep) -> dict[str, str]:
         redis_status = f"error: {exc.__class__.__name__}"
 
     ark_status = "ok" if settings.ARK_API_KEY else "missing ARK_API_KEY"
+    body = {"db": db_status, "redis": redis_status, "ark": ark_status}
+    status_code = 200 if db_status == "ok" and redis_status == "ok" else 503
 
-    return {"db": db_status, "redis": redis_status, "ark": ark_status}
+    return JSONResponse(content=body, status_code=status_code)
 
 
 @router.get("/health/ark")

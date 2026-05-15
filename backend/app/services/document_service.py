@@ -126,7 +126,11 @@ async def stream_generate_draft(
         template_body=body,
         session_id=session_id,
     ):
-        if event_name == "audit":
+        if event_name == "stage" and data.get("node") == "writer" and data.get("status") == "loading":
+            final_content = ""
+        elif event_name == "token":
+            final_content += data.get("delta", "")
+        elif event_name == "audit":
             final_items = data.get("items") or []
             final_passed = bool(data.get("passed"))
             final_rounds = int(data.get("round") or final_rounds)
@@ -154,8 +158,6 @@ async def stream_generate_draft(
                 rounds=final_rounds,
                 passed=final_passed,
             )
-        elif event_name == "token":
-            final_content += data.get("delta", "")
         yield event_name, data
 
 
